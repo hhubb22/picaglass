@@ -1,9 +1,11 @@
-import { app, shell, BrowserWindow } from 'electron'
+import { app, shell, BrowserWindow, dialog, webContents } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
+import { createSshApi } from './ssh/create-ssh-api'
+import { registerSshIpc } from './ssh/register-ssh-ipc'
 
-function createWindow(): void {
+function createWindow(sshApi: ReturnType<typeof createSshApi>): void {
   const mainWindow = new BrowserWindow({
     width: 900,
     height: 670,
@@ -18,6 +20,10 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
+  })
+
+  mainWindow.on('closed', () => {
+    sshApi.disposeSender(mainWindow.webContents.id)
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
@@ -39,10 +45,42 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  createWindow()
+  const sshApi = createSshApi({
+    userDataPath: app.getPath('userData'),
+    dialogs: {
+      showOpenDialog: (options) => {
+        const parent = BrowserWindow.getFocusedWindow()
+        if (parent) {
+          return dialog.showOpenDialog(parent, options)
+        }
+        return dialog.showOpenDialog(options)
+      },
+      showMessageBox: (options) => {
+        const parent = BrowserWindow.getFocusedWindow()
+        if (parent) {
+          return dialog.showMessageBox(parent, options)
+        }
+        return dialog.showMessageBox(options)
+      }
+    },
+    emitTo: (senderId, channel, payload) => {
+      const contents = webContents.fromId(senderId)
+      if (contents === undefined || contents.isDestroyed()) {
+        return
+      }
+      contents.send(channel, structuredClone(payload))
+    }
+  })
+  registerSshIpc(sshApi)
+
+  app.on('before-quit', () => {
+    sshApi.dispose()
+  })
+
+  createWindow(sshApi)
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (BrowserWindow.getAllWindows().length === 0) createWindow(sshApi)
   })
 })
 

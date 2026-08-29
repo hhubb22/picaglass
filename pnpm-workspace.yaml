@@ -3,3 +3,7 @@ allowBuilds:
   electron: true
   esbuild: true
   electron-winstaller: true
+  cpu-features: false
+  ssh2: false
+ignoredOptionalDependencies:
+  - cpu-features

@@ -1,6 +1,5 @@
 import type { ElectronAPI } from '@electron-toolkit/preload'
-
-export type RendererApi = Record<string, never>
+import type { RendererApi } from '../shared/ssh'
 
 declare global {
   interface Window {
