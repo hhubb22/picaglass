@@ -1,8 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { readFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, appendFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
-import { Client } from 'ssh2'
+import { Client, type ClientChannel } from 'ssh2'
 import type {
   SshAuth,
   SshConnectRequest,
@@ -22,6 +22,8 @@ export type SshDialogs = {
   showMessageBox: (options: {
     type?: 'question'
     buttons?: string[]
+    defaultId?: number
+    cancelId?: number
     message: string
     detail?: string
   }) => Promise<{
@@ -50,10 +52,17 @@ export type SshApi = {
   dispose: () => void
 }
 
-type PendingSession = {
+type SshSession = {
   senderId: number
   client: Client
   verify: ((valid: boolean) => void) | undefined
+  host: string
+  port: number
+  hostKey: Buffer | undefined
+  cols: number
+  rows: number
+  ready: Promise<void>
+  stream: ClientChannel | undefined
 }
 
 function invalid(message: string): { ok: false; reason: 'invalid'; message: string } {
@@ -73,6 +82,76 @@ function hostKeyAlgorithm(key: Buffer): string {
     return 'unknown'
   }
   return key.subarray(4, 4 + length).toString('ascii')
+}
+
+function isEnoent(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && 'code' in err && err.code === 'ENOENT'
+}
+
+function knownHostsFile(userDataPath: string): string {
+  return join(userDataPath, 'ssh', 'known_hosts')
+}
+
+function hostName(host: string, port: number): string {
+  if (port === 22) {
+    return host
+  }
+  return `[${host}]:${port}`
+}
+
+function parseHostName(name: string): { host: string; port: number } | undefined {
+  if (name.startsWith('[')) {
+    const close = name.indexOf(']')
+    if (close < 2) {
+      return undefined
+    }
+    const host = name.slice(1, close)
+    if (name.slice(close + 1, close + 2) !== ':') {
+      return { host, port: 22 }
+    }
+    const port = Number(name.slice(close + 2))
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      return undefined
+    }
+    return { host, port }
+  }
+  return { host: name, port: 22 }
+}
+
+function readKnownHostKey(userDataPath: string, host: string, port: number): Buffer | undefined {
+  let text: string
+  try {
+    text = readFileSync(knownHostsFile(userDataPath), 'utf8')
+  } catch (err) {
+    if (isEnoent(err)) {
+      return undefined
+    }
+    throw err
+  }
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim()
+    if (trimmed.length === 0 || trimmed.startsWith('#') || trimmed.startsWith('@')) {
+      continue
+    }
+    const parts = trimmed.split(/\s+/)
+    const name = parts[0]
+    const b64 = parts[2]
+    if (name === undefined || b64 === undefined) {
+      continue
+    }
+    const parsed = parseHostName(name)
+    if (parsed === undefined || parsed.host !== host || parsed.port !== port) {
+      continue
+    }
+    return Buffer.from(b64, 'base64')
+  }
+  return undefined
+}
+
+function persistKnownHost(userDataPath: string, host: string, port: number, key: Buffer): void {
+  mkdirSync(join(userDataPath, 'ssh'), { recursive: true })
+  const line = `${hostName(host, port)} ${hostKeyAlgorithm(key)} ${key.toString('base64')}\n`
+  appendFileSync(knownHostsFile(userDataPath), line)
 }
 
 type ParsedConnect =
@@ -126,7 +205,7 @@ function parseConnect(req: SshConnectRequest): ParsedConnect {
 }
 
 export function createSshApi(deps: CreateSshApiDeps): SshApi {
-  const sessions = new Map<string, PendingSession>()
+  const sessions = new Map<string, SshSession>()
   const keyFiles = new Map<string, string>()
 
   function dropSession(sessionId: string): void {
@@ -151,6 +230,48 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
         dropSession(sessionId)
       }
     }
+  }
+
+  function openShell(sessionId: string): Promise<SshConnectResult> {
+    const session = sessions.get(sessionId)
+    if (session === undefined) {
+      return Promise.resolve(invalid('unknown session'))
+    }
+    return session.ready.then(
+      () =>
+        new Promise<SshConnectResult>((resolve) => {
+          session.client.shell(
+            { term: 'xterm-256color', cols: session.cols, rows: session.rows },
+            (err, stream) => {
+              if (err) {
+                resolve({ ok: false, reason: 'network', message: err.message })
+                return
+              }
+              session.stream = stream
+              stream.on('data', (data: Buffer | string) => {
+                if (!(data instanceof Uint8Array)) {
+                  return
+                }
+                deps.emitTo(session.senderId, 'ssh:data', {
+                  sessionId,
+                  chunk: Uint8Array.from(data)
+                })
+              })
+              stream.on('close', () => {
+                deps.emitTo(session.senderId, 'ssh:status', {
+                  sessionId,
+                  type: 'closed'
+                })
+              })
+              deps.emitTo(session.senderId, 'ssh:status', {
+                sessionId,
+                type: 'connected'
+              })
+              resolve({ ok: true, sessionId })
+            }
+          )
+        })
+    )
   }
 
   return {
@@ -194,8 +315,26 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
 
       const sessionId = randomUUID()
       const client = new Client()
-      const session: PendingSession = { senderId: sender.id, client, verify: undefined }
+      let resolveReady = (): void => undefined
+      const ready = new Promise<void>((resolve) => {
+        resolveReady = resolve
+      })
+      const session: SshSession = {
+        senderId: sender.id,
+        client,
+        verify: undefined,
+        host: parsed.host,
+        port: parsed.port,
+        hostKey: undefined,
+        cols: parsed.cols,
+        rows: parsed.rows,
+        ready,
+        stream: undefined
+      }
       sessions.set(sessionId, session)
+      client.on('ready', () => {
+        resolveReady()
+      })
 
       return new Promise((resolve) => {
         let settled = false
@@ -225,6 +364,24 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
             passphrase,
             readyTimeout: 0,
             hostVerifier: (key, verify) => {
+              session.hostKey = key
+              const known = readKnownHostKey(deps.userDataPath, parsed.host, parsed.port)
+              if (known !== undefined && known.equals(key)) {
+                verify(true)
+                void openShell(sessionId).then(settle)
+                return
+              }
+              if (known !== undefined) {
+                verify(false)
+                sessions.delete(sessionId)
+                settle({
+                  ok: false,
+                  reason: 'host-changed',
+                  fingerprint: hostKeyFingerprint(key),
+                  algorithm: hostKeyAlgorithm(key)
+                })
+                return
+              }
               session.verify = verify
               settle({
                 ok: false,
@@ -248,19 +405,56 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
       if (session === undefined || session.senderId !== sender.id) {
         return invalid('unknown session')
       }
-      if (action !== 'abort') {
+      if (action === 'abort') {
+        dropSession(sessionId)
+        return invalid('aborted')
+      }
+      const options: {
+        type: 'question'
+        buttons: string[]
+        defaultId: number
+        cancelId: number
+        message: string
+        detail?: string
+      } = {
+        type: 'question',
+        buttons: ['是', '否'],
+        defaultId: 0,
+        cancelId: 1,
+        message: '信任这台主机？'
+      }
+      if (session.hostKey !== undefined) {
+        options.detail = hostKeyFingerprint(session.hostKey)
+      }
+      const box = await deps.dialogs.showMessageBox(options)
+      if (box.response !== 0) {
+        dropSession(sessionId)
         return invalid('host not trusted')
       }
-      dropSession(sessionId)
-      return invalid('aborted')
+      if (session.hostKey !== undefined) {
+        persistKnownHost(deps.userDataPath, session.host, session.port, session.hostKey)
+      }
+      if (session.verify !== undefined) {
+        session.verify(true)
+        session.verify = undefined
+      }
+      return openShell(sessionId)
     },
 
-    write() {
-      return
+    write(sessionId, data, sender) {
+      const session = sessions.get(sessionId)
+      if (session === undefined || session.senderId !== sender.id || session.stream === undefined) {
+        return
+      }
+      session.stream.write(Buffer.from(data))
     },
 
-    resize() {
-      return
+    resize(sessionId, cols, rows, sender) {
+      const session = sessions.get(sessionId)
+      if (session === undefined || session.senderId !== sender.id || session.stream === undefined) {
+        return
+      }
+      session.stream.setWindow(rows, cols, 0, 0)
     },
 
     async disconnect(sessionId, sender) {

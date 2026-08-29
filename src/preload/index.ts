@@ -16,7 +16,18 @@ const api: RendererApi = {
     },
     disconnect: (sessionId) => ipcRenderer.invoke('ssh:disconnect', sessionId),
     onData: (handler) => {
-      const listener = (_event: unknown, sessionId: string, chunk: Uint8Array): void => {
+      const listener = (_event: unknown, payload: unknown): void => {
+        if (typeof payload !== 'object' || payload === null) {
+          return
+        }
+        if (!('sessionId' in payload) || !('chunk' in payload)) {
+          return
+        }
+        const sessionId = payload.sessionId
+        const chunk = payload.chunk
+        if (typeof sessionId !== 'string' || !(chunk instanceof Uint8Array)) {
+          return
+        }
         handler(sessionId, chunk)
       }
       ipcRenderer.on('ssh:data', listener)
