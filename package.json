@@ -6,6 +6,7 @@
   "scripts": {
     "format": "prettier --plugin prettier-plugin-svelte --write .",
     "lint": "eslint --cache .",
+    "test": "vitest run",
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json --composite false",
     "svelte-check": "svelte-check --tsconfig ./tsconfig.web.json",
     "typecheck": "pnpm run typecheck:node && pnpm run svelte-check",
@@ -38,6 +39,7 @@
     "svelte": "^5.45.6",
     "svelte-check": "^4.3.4",
     "typescript": "^5.9.3",
-    "vite": "^7.2.6"
+    "vite": "^7.2.6",
+    "vitest": "^4.1.11"
   }
 }
