@@ -151,16 +151,16 @@ export function parseProfileDraft(input: ProfileDraftInput): ParseProfileDraftRe
   return { ok: true, value }
 }
 
-export type ProfileIdentity = {
+export type ProfileDuplicateKey = {
   host: string
   port: number
   username: string
   authKey: string
 }
 
-export function findDuplicateProfile<T extends ProfileIdentity & { label: string }>(
+export function findDuplicateProfile<T extends ProfileDuplicateKey & { label: string }>(
   existing: readonly T[],
-  candidate: ProfileIdentity
+  candidate: ProfileDuplicateKey
 ): { label: string } | undefined {
   const matches = existing.filter(
     (profile) =>

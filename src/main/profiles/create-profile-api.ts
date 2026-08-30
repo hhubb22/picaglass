@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { chmod, copyFile, mkdir, open, readFile, rename, stat } from 'node:fs/promises'
+import { chmod, copyFile, mkdir, open, readFile, rename } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { homedir } from 'node:os'
 import {
@@ -11,6 +11,7 @@ import {
   type CreateProfileInput,
   type CreateProfileResult,
   type ParsedProfileDraft,
+  type ProfileDuplicateKey,
   type ProfileKeyPick,
   type ProfileWorkspace,
   type RendererProfile,
@@ -203,8 +204,8 @@ async function fsyncFile(path: string): Promise<void> {
 }
 
 async function writeDocument(userDataPath: string, document: StoredDocument): Promise<void> {
-  // Temp → fsync → copy last-valid primary to the backup → atomic rename. A crash can
-  // leave the previous primary or the backup, never a half-written document as primary.
+  // Temp → fsync → copy a readable primary to the last-valid backup → atomic rename.
+  // An unreadable primary is replaced, never copied over the backup.
   const dir = workspaceDir(userDataPath)
   await mkdir(dir, { recursive: true, mode: DIR_MODE })
   await chmod(dir, DIR_MODE)
@@ -220,15 +221,11 @@ async function writeDocument(userDataPath: string, document: StoredDocument): Pr
     await handle.close()
   }
   await chmod(tmp, FILE_MODE)
-  try {
-    await stat(primary)
+  const readablePrimary = await readDocumentFile(primary)
+  if (readablePrimary !== undefined) {
     await copyFile(primary, backup)
     await chmod(backup, FILE_MODE)
     await fsyncFile(backup)
-  } catch (err) {
-    if (!isEnoent(err)) {
-      throw err
-    }
   }
   await rename(tmp, primary)
 }
@@ -280,6 +277,16 @@ function cloneDocument(document: StoredDocument): StoredDocument {
   }
 }
 
+function storedDuplicate(profile: StoredProfile): ProfileDuplicateKey & { label: string } {
+  return {
+    label: profileLabel(profile),
+    host: profile.host,
+    port: profile.port,
+    username: profile.username,
+    authKey: authKey(profile.auth)
+  }
+}
+
 function storedAuthFromDraft(
   draft: ParsedProfileDraft,
   keyFiles: Map<string, string>
@@ -314,18 +321,7 @@ export function createProfileApi(deps: CreateProfileApiDeps): ProfileApi {
       notice = { kind: 'recovered-from-backup' }
       return document
     }
-    const primaryMissing = await readFile(primaryPath(deps.userDataPath), 'utf8')
-      .then(() => false)
-      .catch((err: unknown) => isEnoent(err))
-    const backupMissing = await readFile(backupPath(deps.userDataPath), 'utf8')
-      .then(() => false)
-      .catch((err: unknown) => isEnoent(err))
-    if (primaryMissing === true && backupMissing === true) {
-      document = emptyDocument()
-      return document
-    }
     document = emptyDocument()
-    notice = { kind: 'recovered-from-backup' }
     return document
   }
 
@@ -336,9 +332,8 @@ export function createProfileApi(deps: CreateProfileApiDeps): ProfileApi {
   async function commit(next: StoredDocument): Promise<boolean> {
     try {
       await writeDocument(deps.userDataPath, next)
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'cannot write workspace'
-      notice = { kind: 'write-failed', message }
+    } catch {
+      notice = { kind: 'write-failed', message: 'The workspace document could not be written.' }
       return false
     }
     if (notice?.kind === 'write-failed') {
@@ -371,13 +366,7 @@ export function createProfileApi(deps: CreateProfileApiDeps): ProfileApi {
         }
       }
       const duplicate = findDuplicateProfile(
-        (document ?? emptyDocument()).profiles.map((profile) => ({
-          label: profileLabel(profile),
-          host: profile.host,
-          port: profile.port,
-          username: profile.username,
-          authKey: authKey(profile.auth)
-        })),
+        (document ?? emptyDocument()).profiles.map(storedDuplicate),
         {
           host: parsed.value.host,
           port: parsed.value.port,

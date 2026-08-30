@@ -274,6 +274,43 @@ describe('createProfileApi', () => {
     expect(recovered.profiles.map((profile) => profile.label)).toEqual(['kept'])
   })
 
+  it('does not replace the last-valid backup with an unreadable primary on the next write', async () => {
+    const dir = await tempUserData()
+    api = createProfileApi({ userDataPath: dir })
+    expect((await api.create(passwordDraft({ displayName: 'kept' }))).ok).toBe(true)
+    expect((await api.create(passwordDraft({ displayName: 'newer', host: 'new.test' }))).ok).toBe(
+      true
+    )
+
+    await writeFile(join(dir, PRIMARY), '{not-json')
+    api = createProfileApi({ userDataPath: dir })
+    const recovered = await api.load()
+    expect(recovered.notice).toEqual({ kind: 'recovered-from-backup' })
+
+    const written = await api.create(passwordDraft({ displayName: 'after', host: 'after.test' }))
+    expect(written.ok).toBe(true)
+    const backup = JSON.parse(await readFile(join(dir, BACKUP), 'utf8')) as {
+      profiles: Array<{ displayName?: string }>
+    }
+    expect(backup.profiles.map((profile) => profile.displayName)).toEqual(['kept'])
+    const primary = JSON.parse(await readFile(join(dir, PRIMARY), 'utf8')) as {
+      profiles: Array<{ displayName?: string }>
+    }
+    expect(primary.profiles.map((profile) => profile.displayName).sort()).toEqual(['after', 'kept'])
+  })
+
+  it('loads an empty workspace without a recovery warning when no backup can be restored', async () => {
+    const dir = await tempUserData()
+    await mkdir(join(dir, WORKSPACE_DIR), { recursive: true })
+    await writeFile(join(dir, PRIMARY), '{not-json')
+    api = createProfileApi({ userDataPath: dir })
+    await expect(api.load()).resolves.toEqual({
+      profiles: [],
+      selectedProfileId: null,
+      notice: null
+    })
+  })
+
   it('rejects a failed write, keeps the last durable state, and never presents the mutation as saved', async () => {
     const dir = await tempUserData()
     api = createProfileApi({ userDataPath: dir })

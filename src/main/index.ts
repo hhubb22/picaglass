@@ -10,6 +10,24 @@ import { createProfileApi } from './profiles/create-profile-api'
 import { registerProfileIpc } from './profiles/register-profile-ipc'
 import { registerWorkspaceCloseIpc } from './profiles/register-workspace-close-ipc'
 
+function openFileDialog(
+  options: Electron.OpenDialogOptions
+): Promise<Electron.OpenDialogReturnValue> {
+  const parent = BrowserWindow.getFocusedWindow()
+  if (parent) {
+    return dialog.showOpenDialog(parent, options)
+  }
+  return dialog.showOpenDialog(options)
+}
+
+function askQuestion(options: Electron.MessageBoxOptions): Promise<Electron.MessageBoxReturnValue> {
+  const parent = BrowserWindow.getFocusedWindow()
+  if (parent) {
+    return dialog.showMessageBox(parent, options)
+  }
+  return dialog.showMessageBox(options)
+}
+
 function createWindow(sshApi: ReturnType<typeof createSshApi>): void {
   const mainWindow = new BrowserWindow({
     width: 1180,
@@ -54,20 +72,8 @@ app.whenReady().then(() => {
   const sshApi = createSshApi({
     userDataPath: app.getPath('userData'),
     dialogs: {
-      showOpenDialog: (options) => {
-        const parent = BrowserWindow.getFocusedWindow()
-        if (parent) {
-          return dialog.showOpenDialog(parent, options)
-        }
-        return dialog.showOpenDialog(options)
-      },
-      showMessageBox: (options) => {
-        const parent = BrowserWindow.getFocusedWindow()
-        if (parent) {
-          return dialog.showMessageBox(parent, options)
-        }
-        return dialog.showMessageBox(options)
-      }
+      showOpenDialog: openFileDialog,
+      showMessageBox: askQuestion
     },
     emitTo: (senderId, channel, payload) => {
       const contents = webContents.fromId(senderId)
@@ -80,13 +86,7 @@ app.whenReady().then(() => {
   const profileApi = createProfileApi({
     userDataPath: app.getPath('userData'),
     dialogs: {
-      showOpenDialog: (options) => {
-        const parent = BrowserWindow.getFocusedWindow()
-        if (parent) {
-          return dialog.showOpenDialog(parent, options)
-        }
-        return dialog.showOpenDialog(options)
-      }
+      showOpenDialog: openFileDialog
     }
   })
   registerSshIpc(sshApi)
