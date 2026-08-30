@@ -517,7 +517,6 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
               }
               if (known.key !== undefined) {
                 session.clearAuthTimeout()
-                verify(false)
                 sessions.delete(sessionId)
                 settle({
                   ok: false,
@@ -525,6 +524,7 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
                   fingerprint: hostKeyFingerprint(key),
                   algorithm: hostKeyAlgorithm(key)
                 })
+                verify(false)
                 return
               }
               session.clearAuthTimeout()

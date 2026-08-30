@@ -71,6 +71,26 @@ describe('runSshConnect', () => {
     expect(chunks).toEqual([Uint8Array.from([0x62])])
   })
 
+  it('does not expose host-key trust controls when a host key changed', async () => {
+    const next = await runSshConnect({
+      sessionId: null,
+      currentSessionId: () => null,
+      req: req(),
+      connect: async (): Promise<SshConnectResult> => ({
+        ok: false,
+        reason: 'host-changed',
+        fingerprint: 'SHA256:changed',
+        algorithm: 'ssh-ed25519'
+      })
+    })
+
+    expect(next).toEqual({
+      sessionId: null,
+      pending: null,
+      error: 'host-changed'
+    })
+  })
+
   it('does not resurrect a session after a queued closed is applied', async () => {
     let sessionId: string | null = 'old'
     const inbox = createSshEventInbox({

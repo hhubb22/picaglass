@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, readFileSync, unlinkSync } from 'node:fs'
+import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -23,6 +23,7 @@ describe('createSshApi handshake', () => {
   let server: TestServer | undefined
 
   afterEach(async () => {
+    vi.unstubAllEnvs()
     api?.dispose()
     api = undefined
     if (server) {
@@ -195,6 +196,46 @@ describe('createSshApi handshake', () => {
     expect(server.pty()).toEqual({ term: 'xterm-256color', cols: 132, rows: 43 })
   })
 
+  it('trust-always No does not persist the host and the next connect is still host-unknown', async () => {
+    userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
+    const hostKey = generateHostKey(userDataPath)
+    server = await startServer(hostKey.pem)
+    let messageBoxes = 0
+    api = testApi(userDataPath, {
+      showMessageBox: async () => {
+        messageBoxes += 1
+        return { response: 1 }
+      }
+    })
+
+    const first = await api.connect(connectRequest(server.port), { id: 1 })
+    if (first.ok || first.reason !== 'host-unknown') {
+      throw new Error('expected host-unknown')
+    }
+
+    const rejected = await api.confirmHostKey(first.sessionId, 'trust-always', { id: 1 })
+
+    expect(rejected).toEqual({
+      ok: false,
+      reason: 'invalid',
+      message: 'host not trusted'
+    })
+    expect(messageBoxes).toBe(1)
+    expect(server.shellOpened()).toBe(false)
+    expect(() => readFileSync(join(userDataPath!, 'ssh', 'known_hosts'))).toThrow()
+
+    const second = await api.connect(connectRequest(server.port), { id: 1 })
+
+    expect(second).toEqual({
+      ok: false,
+      reason: 'host-unknown',
+      sessionId: expect.any(String),
+      fingerprint: hostKey.fingerprint,
+      algorithm: 'ssh-ed25519'
+    })
+    expect(server.shellOpened()).toBe(false)
+  })
+
   it('a second createSshApi on the same userData connects without host-unknown', async () => {
     userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
     const hostKey = generateHostKey(userDataPath)
@@ -225,6 +266,86 @@ describe('createSshApi handshake', () => {
     expect(server.shellCount()).toBe(shellsAfterTrust + 1)
     expect(JSON.stringify(again)).not.toContain('secret-password')
     expect(filesContain(userDataPath, 'secret-password')).toBe(false)
+  })
+
+  it('persists trusted hosts under userData without changing the home known_hosts', async () => {
+    userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
+    const appUserDataPath = join(userDataPath, 'app-data')
+    const homePath = join(userDataPath, 'home')
+    const homeKnownHostsPath = join(homePath, '.ssh', 'known_hosts')
+    const homeKnownHosts = 'example.test ssh-ed25519 untouched\n'
+    mkdirSync(join(homePath, '.ssh'), { recursive: true })
+    writeFileSync(homeKnownHostsPath, homeKnownHosts)
+    vi.stubEnv('HOME', homePath)
+    const hostKey = generateHostKey(userDataPath)
+    server = await startServer(hostKey.pem)
+    api = testApi(appUserDataPath, {
+      showMessageBox: async () => ({ response: 0 })
+    })
+
+    const unknown = await api.connect(connectRequest(server.port), { id: 1 })
+    if (unknown.ok || unknown.reason !== 'host-unknown') {
+      throw new Error('expected host-unknown')
+    }
+    const trusted = await api.confirmHostKey(unknown.sessionId, 'trust-always', { id: 1 })
+
+    expect(trusted).toEqual({ ok: true, sessionId: unknown.sessionId })
+    expect(readFileSync(homeKnownHostsPath, 'utf8')).toBe(homeKnownHosts)
+    expect(readFileSync(join(appUserDataPath, 'ssh', 'known_hosts'), 'utf8')).toContain(
+      `[127.0.0.1]:${server.port} ssh-ed25519 `
+    )
+  })
+
+  it('rejects a changed host key at the same host and port without opening a shell or trust dialog', async () => {
+    userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
+    const firstHostKey = generateHostKey(userDataPath, 'host-a')
+    const changedHostKey = generateHostKey(userDataPath, 'host-b')
+    server = await startServer(firstHostKey.pem)
+    let messageBoxes = 0
+    api = testApi(userDataPath, {
+      showMessageBox: async () => {
+        messageBoxes += 1
+        return { response: 0 }
+      }
+    })
+
+    const unknown = await api.connect(connectRequest(server.port), { id: 1 })
+    if (unknown.ok || unknown.reason !== 'host-unknown') {
+      throw new Error('expected host-unknown')
+    }
+    const trusted = await api.confirmHostKey(unknown.sessionId, 'trust-always', { id: 1 })
+    if (!trusted.ok) {
+      throw new Error('expected trust-always to succeed')
+    }
+    expect(messageBoxes).toBe(1)
+
+    const port = server.port
+    await api.disconnect(trusted.sessionId, { id: 1 })
+    await server.close()
+    server = await startServer(changedHostKey.pem, { port })
+
+    const changed = await api.connect(connectRequest(port), { id: 1 })
+
+    expect(changed).toEqual({
+      ok: false,
+      reason: 'host-changed',
+      fingerprint: changedHostKey.fingerprint,
+      algorithm: 'ssh-ed25519'
+    })
+    expect(server.shellOpened()).toBe(false)
+
+    const override = await api.confirmHostKey(
+      trusted.sessionId,
+      'trust-always',
+      { id: 1 }
+    )
+    expect(override).toEqual({
+      ok: false,
+      reason: 'invalid',
+      message: 'unknown session'
+    })
+    expect(messageBoxes).toBe(1)
+    expect(server.shellOpened()).toBe(false)
   })
 
   it('trust-always Yes with a private key opens a shell', async () => {

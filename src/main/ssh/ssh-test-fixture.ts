@@ -33,8 +33,11 @@ function fingerprintFromSshKeygen(keyPath: string): string {
   return fingerprint
 }
 
-export function generateHostKey(dir: string): { pem: string; fingerprint: string } {
-  const keyPath = join(dir, 'host')
+export function generateHostKey(
+  dir: string,
+  name = 'host'
+): { pem: string; fingerprint: string } {
+  const keyPath = join(dir, name)
   execFileSync('ssh-keygen', ['-t', 'ed25519', '-f', keyPath, '-N', '', '-q'])
   return {
     pem: readFileSync(keyPath, 'utf8'),
@@ -52,7 +55,7 @@ function ptyFromInfo(info: { cols: number; rows: number; term?: unknown }): Test
 
 export async function startServer(
   hostKeyPem: string,
-  opts?: { stallAuth?: boolean; stallShell?: boolean }
+  opts?: { stallAuth?: boolean; stallShell?: boolean; port?: number }
 ): Promise<TestServer> {
   let shells = 0
   let pty: TestPty | undefined
@@ -107,7 +110,7 @@ export async function startServer(
 
   const port = await new Promise<number>((resolve, reject) => {
     server.once('error', reject)
-    server.listen(0, '127.0.0.1', () => {
+    server.listen(opts?.port ?? 0, '127.0.0.1', () => {
       const addr = server.address()
       if (addr === null || typeof addr === 'string') {
         reject(new Error('expected TCP address'))
