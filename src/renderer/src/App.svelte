@@ -3,6 +3,8 @@
   import { Terminal } from '@xterm/xterm'
   import { FitAddon } from '@xterm/addon-fit'
   import '@xterm/xterm/css/xterm.css'
+  import { createSshEventInbox } from '../../shared/ssh-event-inbox'
+  import { runSshConnect, syncSshConnectInbox } from '../../shared/ssh-connect-ui'
 
   let host = $state('')
   let port = $state('')
@@ -23,6 +25,19 @@
   const encoder = new TextEncoder()
   let terminal: Terminal | undefined
   let fitAddon: FitAddon | undefined
+  const inbox = createSshEventInbox({
+    onData(_id, chunk) {
+      terminal?.write(chunk)
+    },
+    onStatus(event) {
+      if (event.type === 'closed' || event.type === 'error') {
+        sessionId = null
+        if (event.type === 'error') {
+          error = event.message ?? event.type
+        }
+      }
+    }
+  })
 
   function formLocked(): boolean {
     return busy || pending !== null
@@ -31,8 +46,9 @@
   function queueFit(): void {
     requestAnimationFrame(() => {
       fitAddon?.fit()
-      if (sessionId !== null && terminal !== undefined) {
-        window.api.ssh.resize(sessionId, terminal.cols, terminal.rows)
+      const id = sessionId ?? pending?.sessionId ?? null
+      if (id !== null && terminal !== undefined) {
+        window.api.ssh.resize(id, terminal.cols, terminal.rows)
       }
     })
   }
@@ -61,31 +77,44 @@
   async function connect(): Promise<void> {
     busy = true
     error = null
-    pending = null
-    const result = await window.api.ssh.connect({
-      host,
-      port: port.trim() === '' ? undefined : Number(port),
-      username,
-      auth: connectAuth(key, password, passphrase),
-      cols: terminal?.cols ?? 80,
-      rows: terminal?.rows ?? 24
-    })
-    password = ''
-    busy = false
-    if (result.ok) {
-      sessionId = result.sessionId
-      queueFit()
-      return
-    }
-    if (result.reason === 'host-unknown') {
-      pending = {
-        sessionId: result.sessionId,
-        fingerprint: result.fingerprint,
-        algorithm: result.algorithm
+    try {
+      const previous = sessionId
+      inbox.beginHandoff()
+      const next = await runSshConnect({
+        sessionId: previous,
+        currentSessionId: () => sessionId,
+        req: {
+          host,
+          port: port.trim() === '' ? undefined : Number(port),
+          username,
+          auth: connectAuth(key, password, passphrase),
+          cols: terminal?.cols ?? 80,
+          rows: terminal?.rows ?? 24
+        },
+        connect: (request) => window.api.ssh.connect(request)
+      })
+      password = ''
+      sessionId = next.sessionId
+      pending = next.pending
+      error = next.error
+      syncSshConnectInbox(inbox, next)
+      if (next.sessionId !== null || next.pending !== null) {
+        queueFit()
       }
-      return
+      if (next.sessionId !== null && next.pending === null && next.error === null) {
+        terminal?.focus()
+      }
+    } catch (err) {
+      password = ''
+      error = err instanceof Error ? err.message : 'connect failed'
+      if (sessionId === null) {
+        inbox.deactivate()
+      } else {
+        inbox.endHandoff()
+      }
+    } finally {
+      busy = false
     }
-    error = 'message' in result ? result.message : result.reason
   }
 
   async function trust(): Promise<void> {
@@ -94,15 +123,27 @@
     }
     busy = true
     error = null
-    const result = await window.api.ssh.confirmHostKey(pending.sessionId, 'trust-always')
-    pending = null
-    busy = false
-    if (result.ok) {
-      sessionId = result.sessionId
-      queueFit()
-      return
+    const pendingId = pending.sessionId
+    try {
+      inbox.beginHandoff()
+      const result = await window.api.ssh.confirmHostKey(pendingId, 'trust-always')
+      pending = null
+      if (result.ok) {
+        sessionId = result.sessionId
+        inbox.activate(result.sessionId)
+        queueFit()
+        terminal?.focus()
+        return
+      }
+      inbox.deactivate()
+      error = 'message' in result ? result.message : result.reason
+    } catch (err) {
+      pending = null
+      inbox.deactivate()
+      error = err instanceof Error ? err.message : 'trust failed'
+    } finally {
+      busy = false
     }
-    error = 'message' in result ? result.message : result.reason
   }
 
   async function abort(): Promise<void> {
@@ -110,9 +151,16 @@
       return
     }
     busy = true
-    await window.api.ssh.confirmHostKey(pending.sessionId, 'abort')
-    pending = null
-    busy = false
+    const pendingId = pending.sessionId
+    try {
+      await window.api.ssh.confirmHostKey(pendingId, 'abort')
+      pending = null
+    } catch (err) {
+      pending = null
+      error = err instanceof Error ? err.message : 'abort failed'
+    } finally {
+      busy = false
+    }
   }
 
   async function disconnect(): Promise<void> {
@@ -120,9 +168,18 @@
       return
     }
     busy = true
-    await window.api.ssh.disconnect(sessionId)
-    sessionId = null
-    busy = false
+    const id = sessionId
+    try {
+      await window.api.ssh.disconnect(id)
+      sessionId = null
+      inbox.deactivate()
+    } catch (err) {
+      sessionId = null
+      inbox.deactivate()
+      error = err instanceof Error ? err.message : 'disconnect failed'
+    } finally {
+      busy = false
+    }
   }
 
   onMount(() => {
@@ -145,21 +202,10 @@
       window.api.ssh.write(sessionId, encoder.encode(data))
     })
     const stopData = window.api.ssh.onData((id, chunk) => {
-      if (id !== sessionId) {
-        return
-      }
-      term.write(chunk)
+      inbox.handleData(id, chunk)
     })
     const stopStatus = window.api.ssh.onStatus((event) => {
-      if (event.sessionId !== sessionId) {
-        return
-      }
-      if (event.type === 'closed' || event.type === 'error') {
-        sessionId = null
-        if (event.type === 'error') {
-          error = event.message ?? event.type
-        }
-      }
+      inbox.handleStatus(event)
     })
     const observer = new ResizeObserver(() => {
       queueFit()
@@ -171,6 +217,7 @@
       stopData()
       stopStatus()
       observer.disconnect()
+      inbox.deactivate()
       term.dispose()
       terminal = undefined
       fitAddon = undefined
@@ -346,12 +393,12 @@
     min-width: 0;
     min-height: 0;
     height: 100%;
+    padding: 8px;
     background: #111;
   }
 
   .terminal {
     height: 100%;
     width: 100%;
-    padding: 8px;
   }
 </style>

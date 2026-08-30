@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdirSync, readFileSync, appendFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
-import { Client, type ClientChannel } from 'ssh2'
+import { Client, type ClientChannel, utils as ssh2Utils } from 'ssh2'
 import type {
   SshAuth,
   SshConnectRequest,
@@ -35,6 +35,7 @@ export type CreateSshApiDeps = {
   userDataPath: string
   dialogs: SshDialogs
   emitTo: (senderId: number, channel: string, payload: unknown) => void
+  authTimeoutMs?: number
 }
 
 export type SshApi = {
@@ -52,6 +53,14 @@ export type SshApi = {
   dispose: () => void
 }
 
+type SshReady =
+  | { ok: true }
+  | {
+      ok: false
+      reason: 'auth-failed' | 'network' | 'timeout'
+      message: string
+    }
+
 type SshSession = {
   senderId: number
   client: Client
@@ -61,8 +70,13 @@ type SshSession = {
   hostKey: Buffer | undefined
   cols: number
   rows: number
-  ready: Promise<void>
+  ready: Promise<SshReady>
   stream: ClientChannel | undefined
+  armAuthTimeout: () => void
+  clearAuthTimeout: () => void
+  settleOpen: ((result: SshConnectResult) => void) | undefined
+  failHandshake: ((result: SshReady & { ok: false }) => void) | undefined
+  confirming: boolean
 }
 
 function invalid(message: string): { ok: false; reason: 'invalid'; message: string } {
@@ -118,15 +132,20 @@ function parseHostName(name: string): { host: string; port: number } | undefined
   return { host: name, port: 22 }
 }
 
-function readKnownHostKey(userDataPath: string, host: string, port: number): Buffer | undefined {
+function readKnownHostKey(
+  userDataPath: string,
+  host: string,
+  port: number
+): { ok: true; key: Buffer | undefined } | { ok: false; message: string } {
   let text: string
   try {
     text = readFileSync(knownHostsFile(userDataPath), 'utf8')
   } catch (err) {
     if (isEnoent(err)) {
-      return undefined
+      return { ok: true, key: undefined }
     }
-    throw err
+    const message = err instanceof Error ? err.message : 'cannot read known_hosts'
+    return { ok: false, message }
   }
   for (const line of text.split('\n')) {
     const trimmed = line.trim()
@@ -143,9 +162,9 @@ function readKnownHostKey(userDataPath: string, host: string, port: number): Buf
     if (parsed === undefined || parsed.host !== host || parsed.port !== port) {
       continue
     }
-    return Buffer.from(b64, 'base64')
+    return { ok: true, key: Buffer.from(b64, 'base64') }
   }
-  return undefined
+  return { ok: true, key: undefined }
 }
 
 function persistKnownHost(userDataPath: string, host: string, port: number, key: Buffer): void {
@@ -179,6 +198,31 @@ function parsePort(
   return port
 }
 
+function sshClientFailure(err: Error): SshReady & { ok: false } {
+  if (!('level' in err) || typeof err.level !== 'string') {
+    return { ok: false, reason: 'network', message: err.message }
+  }
+  if (err.level === 'client-authentication') {
+    return { ok: false, reason: 'auth-failed', message: err.message }
+  }
+  if (err.level === 'client-timeout') {
+    return { ok: false, reason: 'timeout', message: err.message }
+  }
+  return { ok: false, reason: 'network', message: err.message }
+}
+
+function privateKeyError(privateKey: Buffer, passphrase: string | undefined): string | undefined {
+  const parsed = ssh2Utils.parseKey(privateKey, passphrase)
+  if (parsed instanceof Error) {
+    return parsed.message
+  }
+  const key = Array.isArray(parsed) ? parsed[0] : parsed
+  if (key === undefined || !key.isPrivateKey()) {
+    return 'privateKey value does not contain a (valid) private key'
+  }
+  return undefined
+}
+
 function parseConnect(req: SshConnectRequest): ParsedConnect {
   const host = req.host.trim()
   if (host.length === 0 || host.includes('://') || host.includes('/')) {
@@ -207,6 +251,7 @@ function parseConnect(req: SshConnectRequest): ParsedConnect {
 export function createSshApi(deps: CreateSshApiDeps): SshApi {
   const sessions = new Map<string, SshSession>()
   const keyFiles = new Map<string, string>()
+  const authTimeoutMs = deps.authTimeoutMs ?? 20_000
 
   function dropSession(sessionId: string): void {
     const session = sessions.get(sessionId)
@@ -214,6 +259,14 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
       return
     }
     sessions.delete(sessionId)
+    session.clearAuthTimeout()
+    const closed: SshReady & { ok: false } = {
+      ok: false,
+      reason: 'network',
+      message: 'connection closed'
+    }
+    session.settleOpen?.(closed)
+    session.failHandshake?.(closed)
     try {
       if (session.verify !== undefined) {
         session.verify(false)
@@ -237,16 +290,37 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
     if (session === undefined) {
       return Promise.resolve(invalid('unknown session'))
     }
-    return session.ready.then(
-      () =>
-        new Promise<SshConnectResult>((resolve) => {
+    return session.ready.then((outcome) => {
+      if (!outcome.ok) {
+        dropSession(sessionId)
+        return outcome
+      }
+      return new Promise<SshConnectResult>((resolve) => {
+        let finished = false
+        const finish = (result: SshConnectResult): void => {
+          if (finished) {
+            return
+          }
+          finished = true
+          session.settleOpen = undefined
+          resolve(result)
+        }
+        session.settleOpen = finish
+        try {
           session.client.shell(
             { term: 'xterm-256color', cols: session.cols, rows: session.rows },
             (err, stream) => {
-              if (err) {
-                resolve({ ok: false, reason: 'network', message: err.message })
+              if (finished || sessions.get(sessionId) !== session) {
+                stream?.destroy()
                 return
               }
+              if (err) {
+                session.clearAuthTimeout()
+                finish({ ok: false, reason: 'network', message: err.message })
+                dropSession(sessionId)
+                return
+              }
+              session.clearAuthTimeout()
               session.stream = stream
               stream.on('data', (data: Buffer | string) => {
                 if (!(data instanceof Uint8Array)) {
@@ -262,16 +336,23 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
                   sessionId,
                   type: 'closed'
                 })
+                dropSession(sessionId)
               })
               deps.emitTo(session.senderId, 'ssh:status', {
                 sessionId,
                 type: 'connected'
               })
-              resolve({ ok: true, sessionId })
+              finish({ ok: true, sessionId })
             }
           )
-        })
-    )
+        } catch (err) {
+          session.clearAuthTimeout()
+          const message = err instanceof Error ? err.message : 'cannot open shell'
+          finish({ ok: false, reason: 'network', message })
+          dropSession(sessionId)
+        }
+      })
+    })
   }
 
   return {
@@ -296,8 +377,6 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
         return Promise.resolve(parsed)
       }
 
-      dropSender(sender.id)
-
       let privateKey: Buffer | undefined
       let passphrase: string | undefined
       if (parsed.auth.method === 'privateKey') {
@@ -311,14 +390,29 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
           return Promise.resolve(invalid('cannot read key'))
         }
         passphrase = parsed.auth.passphrase
+        const keyError = privateKeyError(privateKey, passphrase)
+        if (keyError !== undefined) {
+          return Promise.resolve(invalid(keyError))
+        }
       }
+
+      const known = readKnownHostKey(deps.userDataPath, parsed.host, parsed.port)
+      if (known.ok !== true) {
+        return Promise.resolve(invalid(known.message))
+      }
+
+      dropSender(sender.id)
 
       const sessionId = randomUUID()
       const client = new Client()
-      let resolveReady = (): void => undefined
-      const ready = new Promise<void>((resolve) => {
+      let resolveReady: (outcome: SshReady) => void = () => undefined
+      const ready = new Promise<SshReady>((resolve) => {
         resolveReady = resolve
       })
+      const settleReady = (outcome: SshReady): void => {
+        resolveReady(outcome)
+        resolveReady = () => undefined
+      }
       const session: SshSession = {
         senderId: sender.id,
         client,
@@ -329,11 +423,16 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
         cols: parsed.cols,
         rows: parsed.rows,
         ready,
-        stream: undefined
+        stream: undefined,
+        armAuthTimeout: () => undefined,
+        clearAuthTimeout: () => undefined,
+        settleOpen: undefined,
+        failHandshake: undefined,
+        confirming: false
       }
       sessions.set(sessionId, session)
       client.on('ready', () => {
-        resolveReady()
+        settleReady({ ok: true })
       })
 
       return new Promise((resolve) => {
@@ -346,12 +445,57 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
           resolve(result)
         }
 
-        client.on('error', (err: Error) => {
-          if (settled) {
+        let authTimer: ReturnType<typeof setTimeout> | undefined
+        const clearAuthTimeout = (): void => {
+          if (authTimer !== undefined) {
+            clearTimeout(authTimer)
+            authTimer = undefined
+          }
+        }
+        session.clearAuthTimeout = clearAuthTimeout
+        session.armAuthTimeout = () => {
+          clearAuthTimeout()
+          if (authTimeoutMs <= 0) {
             return
           }
-          sessions.delete(sessionId)
-          settle({ ok: false, reason: 'network', message: err.message })
+          authTimer = setTimeout(() => {
+            authTimer = undefined
+            const failed: SshReady & { ok: false } = {
+              ok: false,
+              reason: 'timeout',
+              message: 'authentication timed out'
+            }
+            settleReady(failed)
+            session.settleOpen?.(failed)
+            settle(failed)
+            dropSession(sessionId)
+          }, authTimeoutMs)
+        }
+        session.failHandshake = (result) => {
+          settleReady(result)
+          settle(result)
+        }
+        session.armAuthTimeout()
+
+        client.on('error', (err: Error) => {
+          session.clearAuthTimeout()
+          const failed = sshClientFailure(err)
+          settleReady(failed)
+          session.settleOpen?.(failed)
+          settle(failed)
+          dropSession(sessionId)
+        })
+        client.on('close', () => {
+          session.clearAuthTimeout()
+          const failed: SshReady & { ok: false } = {
+            ok: false,
+            reason: 'network',
+            message: 'connection closed'
+          }
+          settleReady(failed)
+          session.settleOpen?.(failed)
+          dropSession(sessionId)
+          settle(failed)
         })
 
         try {
@@ -365,13 +509,14 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
             readyTimeout: 0,
             hostVerifier: (key, verify) => {
               session.hostKey = key
-              const known = readKnownHostKey(deps.userDataPath, parsed.host, parsed.port)
-              if (known !== undefined && known.equals(key)) {
+              if (known.key !== undefined && known.key.equals(key)) {
                 verify(true)
+                session.armAuthTimeout()
                 void openShell(sessionId).then(settle)
                 return
               }
-              if (known !== undefined) {
+              if (known.key !== undefined) {
+                session.clearAuthTimeout()
                 verify(false)
                 sessions.delete(sessionId)
                 settle({
@@ -382,6 +527,7 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
                 })
                 return
               }
+              session.clearAuthTimeout()
               session.verify = verify
               settle({
                 ok: false,
@@ -393,9 +539,10 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
             }
           })
         } catch (err) {
-          sessions.delete(sessionId)
+          session.clearAuthTimeout()
           const message = err instanceof Error ? err.message : 'cannot connect'
-          settle(invalid(message))
+          settle({ ok: false, reason: 'network', message })
+          dropSession(sessionId)
         }
       })
     },
@@ -409,6 +556,10 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
         dropSession(sessionId)
         return invalid('aborted')
       }
+      if (session.verify === undefined || session.confirming) {
+        return invalid('unknown session')
+      }
+      session.confirming = true
       const options: {
         type: 'question'
         buttons: string[]
@@ -419,26 +570,48 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
       } = {
         type: 'question',
         buttons: ['是', '否'],
-        defaultId: 0,
+        defaultId: 1,
         cancelId: 1,
         message: '信任这台主机？'
       }
       if (session.hostKey !== undefined) {
         options.detail = hostKeyFingerprint(session.hostKey)
       }
-      const box = await deps.dialogs.showMessageBox(options)
-      if (box.response !== 0) {
+      try {
+        const box = await deps.dialogs.showMessageBox(options)
+        const current = sessions.get(sessionId)
+        if (current === undefined || current.senderId !== sender.id) {
+          return invalid('unknown session')
+        }
+        if (box.response !== 0) {
+          dropSession(sessionId)
+          return invalid('host not trusted')
+        }
+        if (current.hostKey !== undefined) {
+          try {
+            persistKnownHost(deps.userDataPath, current.host, current.port, current.hostKey)
+          } catch (err) {
+            dropSession(sessionId)
+            const message = err instanceof Error ? err.message : 'cannot save host key'
+            return invalid(message)
+          }
+        }
+        if (current.verify !== undefined) {
+          current.verify(true)
+          current.verify = undefined
+          current.armAuthTimeout()
+        }
+        return openShell(sessionId)
+      } catch (err) {
         dropSession(sessionId)
-        return invalid('host not trusted')
+        const message = err instanceof Error ? err.message : 'trust dialog failed'
+        return invalid(message)
+      } finally {
+        const current = sessions.get(sessionId)
+        if (current !== undefined) {
+          current.confirming = false
+        }
       }
-      if (session.hostKey !== undefined) {
-        persistKnownHost(deps.userDataPath, session.host, session.port, session.hostKey)
-      }
-      if (session.verify !== undefined) {
-        session.verify(true)
-        session.verify = undefined
-      }
-      return openShell(sessionId)
     },
 
     write(sessionId, data, sender) {
@@ -451,10 +624,14 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
 
     resize(sessionId, cols, rows, sender) {
       const session = sessions.get(sessionId)
-      if (session === undefined || session.senderId !== sender.id || session.stream === undefined) {
+      if (session === undefined || session.senderId !== sender.id) {
         return
       }
-      session.stream.setWindow(rows, cols, 0, 0)
+      session.cols = cols
+      session.rows = rows
+      if (session.stream !== undefined) {
+        session.stream.setWindow(rows, cols, 0, 0)
+      }
     },
 
     async disconnect(sessionId, sender) {

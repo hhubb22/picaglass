@@ -1,183 +1,23 @@
 import { execFileSync } from 'node:child_process'
-import { readFileSync, readdirSync } from 'node:fs'
+import { mkdirSync, readFileSync, unlinkSync } from 'node:fs'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { Server } from 'ssh2'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createSshApi, type SshApi, type SshDialogs } from './create-ssh-api'
-import type { SshAuth, SshConnectRequest } from '../../shared/ssh'
+import type { SshApi } from './create-ssh-api'
+import {
+  type CapturedEmit,
+  type TestServer,
+  connectRequest,
+  emitsHaveChunk,
+  filesContain,
+  generateHostKey,
+  neverSettles,
+  startServer,
+  testApi
+} from './ssh-test-fixture'
 
-type TestPty = {
-  term: string
-  cols: number
-  rows: number
-}
-
-type TestServer = {
-  port: number
-  shellCount: () => number
-  shellOpened: () => boolean
-  pty: () => TestPty | undefined
-  close: () => Promise<void>
-}
-
-function fingerprintFromSshKeygen(keyPath: string): string {
-  const line = execFileSync('ssh-keygen', ['-lf', keyPath], { encoding: 'utf8' }).trim()
-  const fingerprint = line.split(/\s+/)[1]
-  if (fingerprint === undefined || !fingerprint.startsWith('SHA256:')) {
-    throw new Error(`unexpected ssh-keygen -lf output: ${line}`)
-  }
-  return fingerprint
-}
-
-function generateHostKey(dir: string): { pem: string; fingerprint: string } {
-  const keyPath = join(dir, 'host')
-  execFileSync('ssh-keygen', ['-t', 'ed25519', '-f', keyPath, '-N', '', '-q'])
-  return {
-    pem: readFileSync(keyPath, 'utf8'),
-    fingerprint: fingerprintFromSshKeygen(keyPath)
-  }
-}
-
-function ptyFromInfo(info: { cols: number; rows: number; term?: unknown }): TestPty {
-  return {
-    term: typeof info.term === 'string' ? info.term : '',
-    cols: info.cols,
-    rows: info.rows
-  }
-}
-
-async function startServer(hostKeyPem: string): Promise<TestServer> {
-  let shells = 0
-  let pty: TestPty | undefined
-  const server = new Server({ hostKeys: [hostKeyPem] }, (connection) => {
-    connection.on('error', () => undefined)
-    connection.on('authentication', (ctx) => {
-      if (ctx.method === 'password' && ctx.password === 'secret-password') {
-        ctx.accept()
-        return
-      }
-      if (ctx.method === 'publickey') {
-        ctx.accept()
-        return
-      }
-      ctx.reject(['password', 'publickey'])
-    })
-    connection.on('ready', () => {
-      connection.on('session', (accept) => {
-        const session = accept()
-        session.on('pty', (acceptPty, _reject, info) => {
-          pty = ptyFromInfo(info)
-          acceptPty()
-        })
-        session.on('shell', (acceptShell) => {
-          shells += 1
-          const stream = acceptShell()
-          stream.write(Buffer.from([0xff, 0xfe, 0x00, 0x61]))
-        })
-      })
-    })
-  })
-
-  server.on('error', () => undefined)
-
-  const port = await new Promise<number>((resolve, reject) => {
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', () => {
-      const addr = server.address()
-      if (addr === null || typeof addr === 'string') {
-        reject(new Error('expected TCP address'))
-        return
-      }
-      resolve(addr.port)
-    })
-  })
-
-  return {
-    port,
-    shellCount: () => shells,
-    shellOpened: () => shells > 0,
-    pty: () => pty,
-    close: () =>
-      new Promise((resolve, reject) => {
-        server.close((err) => {
-          if (err) {
-            reject(err)
-            return
-          }
-          resolve()
-        })
-      })
-  }
-}
-
-type CapturedEmit = { channel: string; payload: unknown }
-
-function testApi(
-  userDataPath: string,
-  dialogs?: Partial<SshDialogs>,
-  emits?: CapturedEmit[]
-): SshApi {
-  return createSshApi({
-    userDataPath,
-    dialogs: {
-      showOpenDialog: async () => ({ canceled: true, filePaths: [] }),
-      showMessageBox: async () => ({ response: 1 }),
-      ...dialogs
-    },
-    emitTo: (_senderId, channel, payload) => {
-      const cloned = structuredClone(payload)
-      emits?.push({ channel, payload: cloned })
-    }
-  })
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
-}
-
-function dataChunk(emits: CapturedEmit[]): Uint8Array | undefined {
-  for (const event of emits) {
-    if (event.channel !== 'ssh:data' || !isRecord(event.payload)) {
-      continue
-    }
-    const chunk = event.payload.chunk
-    if (chunk instanceof Uint8Array) {
-      return chunk
-    }
-  }
-  return undefined
-}
-
-function filesContain(dir: string, needle: string): boolean {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name)
-    if (entry.isDirectory()) {
-      if (filesContain(full, needle)) {
-        return true
-      }
-      continue
-    }
-    if (readFileSync(full).includes(needle)) {
-      return true
-    }
-  }
-  return false
-}
-
-function connectRequest(port: number, auth?: SshAuth): SshConnectRequest {
-  return {
-    host: '127.0.0.1',
-    port,
-    username: 'tester',
-    auth: auth ?? { method: 'password', password: 'secret-password' },
-    cols: 80,
-    rows: 24
-  }
-}
-
-describe('createSshApi', () => {
+describe('createSshApi handshake', () => {
   let userDataPath: string | undefined
   let api: SshApi | undefined
   let server: TestServer | undefined
@@ -312,7 +152,7 @@ describe('createSshApi', () => {
     api = testApi(userDataPath, {
       showMessageBox: async (options) => {
         expect(options.cancelId).toBe(1)
-        expect(options.defaultId).toBe(0)
+        expect(options.defaultId).toBe(1)
         messageBoxes += 1
         return { response: 0 }
       }
@@ -333,6 +173,26 @@ describe('createSshApi', () => {
     expect(serialized).not.toContain('secret-password')
     expect(serialized).not.toContain('BEGIN OPENSSH PRIVATE KEY')
     expect(serialized).not.toContain('BEGIN RSA PRIVATE KEY')
+  })
+
+  it('trust-always opens a shell with cols/rows updated while the host was pending', async () => {
+    userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
+    const hostKey = generateHostKey(userDataPath)
+    server = await startServer(hostKey.pem)
+    api = testApi(userDataPath, {
+      showMessageBox: async () => ({ response: 0 })
+    })
+
+    const unknown = await api.connect(connectRequest(server.port), { id: 1 })
+    if (unknown.ok || unknown.reason !== 'host-unknown') {
+      throw new Error('expected host-unknown')
+    }
+    api.resize(unknown.sessionId, 132, 43, { id: 1 })
+
+    const trusted = await api.confirmHostKey(unknown.sessionId, 'trust-always', { id: 1 })
+
+    expect(trusted).toEqual({ ok: true, sessionId: unknown.sessionId })
+    expect(server.pty()).toEqual({ term: 'xterm-256color', cols: 132, rows: 43 })
   })
 
   it('a second createSshApi on the same userData connects without host-unknown', async () => {
@@ -367,49 +227,6 @@ describe('createSshApi', () => {
     expect(filesContain(userDataPath, 'secret-password')).toBe(false)
   })
 
-  it('ssh:data delivers invalid UTF-8 bytes after clone', async () => {
-    userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
-    const hostKey = generateHostKey(userDataPath)
-    server = await startServer(hostKey.pem)
-    const emits: CapturedEmit[] = []
-    api = testApi(
-      userDataPath,
-      {
-        showMessageBox: async () => ({ response: 0 })
-      },
-      emits
-    )
-
-    const unknown = await api.connect(connectRequest(server.port), { id: 1 })
-    if (unknown.ok || unknown.reason !== 'host-unknown') {
-      throw new Error('expected host-unknown')
-    }
-    const trusted = await api.confirmHostKey(unknown.sessionId, 'trust-always', { id: 1 })
-    if (!trusted.ok) {
-      throw new Error('expected a live session')
-    }
-
-    const expected = Uint8Array.from([0xff, 0xfe, 0x00, 0x61])
-    const utf8RoundTrip = Buffer.from(Buffer.from(expected).toString('utf8'), 'utf8')
-    expect(utf8RoundTrip.equals(Buffer.from(expected))).toBe(false)
-
-    const chunk = await vi.waitFor(() => {
-      const received = dataChunk(emits)
-      if (received === undefined) {
-        throw new Error('no ssh:data yet')
-      }
-      return received
-    })
-
-    expect(chunk).toEqual(expected)
-    expect(JSON.stringify(emits.map((event) => event.payload))).not.toContain(
-      'BEGIN OPENSSH PRIVATE KEY'
-    )
-    expect(JSON.stringify(emits.map((event) => event.payload))).not.toContain(
-      'BEGIN RSA PRIVATE KEY'
-    )
-  })
-
   it('trust-always Yes with a private key opens a shell', async () => {
     userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
     const hostKey = generateHostKey(userDataPath)
@@ -439,5 +256,112 @@ describe('createSshApi', () => {
     expect(server.shellOpened()).toBe(true)
     expect(JSON.stringify(trusted)).not.toContain('BEGIN OPENSSH PRIVATE KEY')
     expect(JSON.stringify(trusted)).not.toContain(readFileSync(clientKeyPath, 'utf8'))
+  })
+
+  it('a known_hosts read error returns a structured failure instead of hanging', async () => {
+    userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
+    mkdirSync(join(userDataPath, 'ssh', 'known_hosts'), { recursive: true })
+    const hostKey = generateHostKey(userDataPath)
+    server = await startServer(hostKey.pem)
+    api = testApi(userDataPath)
+
+    const result = await Promise.race([
+      api.connect(connectRequest(server.port), { id: 1 }),
+      neverSettles('connect hung after known_hosts read error')
+    ])
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'invalid',
+      message: expect.any(String)
+    })
+  })
+
+  it('a known_hosts read error on reconnect does not drop the live session', async () => {
+    userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
+    const hostKey = generateHostKey(userDataPath)
+    server = await startServer(hostKey.pem)
+    const emits: CapturedEmit[] = []
+    api = testApi(userDataPath, { showMessageBox: async () => ({ response: 0 }) }, emits)
+
+    const unknown = await api.connect(connectRequest(server.port), { id: 1 })
+    if (unknown.ok || unknown.reason !== 'host-unknown') {
+      throw new Error('expected host-unknown')
+    }
+    const trusted = await api.confirmHostKey(unknown.sessionId, 'trust-always', { id: 1 })
+    if (!trusted.ok) {
+      throw new Error('expected a live session')
+    }
+
+    unlinkSync(join(userDataPath, 'ssh', 'known_hosts'))
+    mkdirSync(join(userDataPath, 'ssh', 'known_hosts'))
+
+    const rejected = await api.connect(connectRequest(server.port), { id: 1 })
+    expect(rejected).toEqual({
+      ok: false,
+      reason: 'invalid',
+      message: expect.any(String)
+    })
+    expect(server.shellCount()).toBe(1)
+
+    const probe = Uint8Array.from([0x55, 0x44])
+    api.write(trusted.sessionId, probe, { id: 1 })
+    await vi.waitFor(() => {
+      if (!emitsHaveChunk(emits, probe)) {
+        throw new Error('live session did not echo after known_hosts reconnect')
+      }
+    })
+  })
+
+  it('a known_hosts write error returns a structured failure instead of throwing', async () => {
+    userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
+    const hostKey = generateHostKey(userDataPath)
+    server = await startServer(hostKey.pem)
+    api = testApi(userDataPath, {
+      showMessageBox: async () => ({ response: 0 })
+    })
+
+    const unknown = await api.connect(connectRequest(server.port), { id: 1 })
+    if (unknown.ok || unknown.reason !== 'host-unknown') {
+      throw new Error('expected host-unknown')
+    }
+    mkdirSync(join(userDataPath, 'ssh', 'known_hosts'), { recursive: true })
+
+    const trusted = await api.confirmHostKey(unknown.sessionId, 'trust-always', { id: 1 })
+
+    expect(trusted).toEqual({
+      ok: false,
+      reason: 'invalid',
+      message: expect.any(String)
+    })
+    expect(server.shellOpened()).toBe(false)
+  })
+
+  it('a thrown trust dialog returns a structured failure and drops the session', async () => {
+    userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
+    const hostKey = generateHostKey(userDataPath)
+    server = await startServer(hostKey.pem)
+    api = testApi(userDataPath, {
+      showMessageBox: async () => {
+        throw new Error('dialog failed')
+      }
+    })
+
+    const unknown = await api.connect(connectRequest(server.port), { id: 1 })
+    if (unknown.ok || unknown.reason !== 'host-unknown') {
+      throw new Error('expected host-unknown')
+    }
+
+    const trusted = await api.confirmHostKey(unknown.sessionId, 'trust-always', { id: 1 })
+
+    expect(trusted).toEqual({
+      ok: false,
+      reason: 'invalid',
+      message: expect.any(String)
+    })
+    expect(server.shellOpened()).toBe(false)
+
+    const leftover = await api.confirmHostKey(unknown.sessionId, 'abort', { id: 1 })
+    expect(leftover).toEqual({ ok: false, reason: 'invalid', message: 'unknown session' })
   })
 })
