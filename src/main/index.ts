@@ -2,6 +2,7 @@ import { app, shell, BrowserWindow, dialog, webContents } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
+import { bindSshWindow } from './ssh/bind-ssh-window'
 import { createSshApi } from './ssh/create-ssh-api'
 import { registerSshIpc } from './ssh/register-ssh-ipc'
 
@@ -22,9 +23,7 @@ function createWindow(sshApi: ReturnType<typeof createSshApi>): void {
     mainWindow.show()
   })
 
-  mainWindow.on('closed', () => {
-    sshApi.disposeSender(mainWindow.webContents.id)
-  })
+  bindSshWindow(mainWindow, sshApi)
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
     void shell.openExternal(details.url)

@@ -250,7 +250,7 @@ function parseConnect(req: SshConnectRequest): ParsedConnect {
 
 export function createSshApi(deps: CreateSshApiDeps): SshApi {
   const sessions = new Map<string, SshSession>()
-  const keyFiles = new Map<string, string>()
+  const keyFiles = new Map<string, { senderId: number; filePath: string }>()
   const authTimeoutMs = deps.authTimeoutMs ?? 20_000
 
   function dropSession(sessionId: string): void {
@@ -281,6 +281,16 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
       const session = sessions.get(sessionId)
       if (session?.senderId === senderId) {
         dropSession(sessionId)
+      }
+    }
+  }
+
+  // Key refs die with the window, not with the session: the form keeps its picked key across
+  // reconnects, so dropping a session must leave them alone.
+  function forgetKeys(senderId: number): void {
+    for (const [keyRef, entry] of [...keyFiles]) {
+      if (entry.senderId === senderId) {
+        keyFiles.delete(keyRef)
       }
     }
   }
@@ -356,7 +366,7 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
   }
 
   return {
-    async pickPrivateKey() {
+    async pickPrivateKey(sender) {
       const result = await deps.dialogs.showOpenDialog({
         title: '选择私钥',
         defaultPath: join(homedir(), '.ssh'),
@@ -367,7 +377,7 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
         return null
       }
       const keyRef = randomUUID()
-      keyFiles.set(keyRef, filePath)
+      keyFiles.set(keyRef, { senderId: sender.id, filePath })
       return { keyRef, label: basename(filePath) }
     },
 
@@ -380,12 +390,12 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
       let privateKey: Buffer | undefined
       let passphrase: string | undefined
       if (parsed.auth.method === 'privateKey') {
-        const filePath = keyFiles.get(parsed.auth.keyRef)
-        if (filePath === undefined) {
+        const entry = keyFiles.get(parsed.auth.keyRef)
+        if (entry === undefined || entry.senderId !== sender.id) {
           return Promise.resolve(invalid('unknown key'))
         }
         try {
-          privateKey = readFileSync(filePath)
+          privateKey = readFileSync(entry.filePath)
         } catch {
           return Promise.resolve(invalid('cannot read key'))
         }
@@ -644,12 +654,14 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
 
     disposeSender(senderId) {
       dropSender(senderId)
+      forgetKeys(senderId)
     },
 
     dispose() {
       for (const sessionId of [...sessions.keys()]) {
         dropSession(sessionId)
       }
+      keyFiles.clear()
     }
   }
 }

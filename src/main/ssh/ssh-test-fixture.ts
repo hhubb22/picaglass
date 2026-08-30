@@ -7,10 +7,13 @@ import { createSshApi, type SshApi, type SshDialogs } from './create-ssh-api'
 import { createSshEventInbox } from '../../shared/ssh-event-inbox'
 import type { SshAuth, SshConnectRequest, SshStatusEvent } from '../../shared/ssh'
 
-export type TestPty = {
-  term: string
+export type TestSize = {
   cols: number
   rows: number
+}
+
+export type TestPty = TestSize & {
+  term: string
 }
 
 export type TestServer = {
@@ -18,6 +21,9 @@ export type TestServer = {
   shellCount: () => number
   shellOpened: () => boolean
   pty: () => TestPty | undefined
+  windowChanges: () => TestSize[]
+  receivedBytes: () => Buffer
+  liveConnections: () => number
   closeLastShell: () => void
   close: () => Promise<void>
 }
@@ -33,10 +39,7 @@ function fingerprintFromSshKeygen(keyPath: string): string {
   return fingerprint
 }
 
-export function generateHostKey(
-  dir: string,
-  name = 'host'
-): { pem: string; fingerprint: string } {
+export function generateHostKey(dir: string, name = 'host'): { pem: string; fingerprint: string } {
   const keyPath = join(dir, name)
   execFileSync('ssh-keygen', ['-t', 'ed25519', '-f', keyPath, '-N', '', '-q'])
   return {
@@ -60,7 +63,14 @@ export async function startServer(
   let shells = 0
   let pty: TestPty | undefined
   let lastShell: { close: () => void } | undefined
+  let live = 0
+  const windowChanges: TestSize[] = []
+  const received: Buffer[] = []
   const server = new Server({ hostKeys: [hostKeyPem] }, (connection) => {
+    live += 1
+    connection.on('close', () => {
+      live -= 1
+    })
     connection.on('error', () => undefined)
     connection.on('authentication', (ctx) => {
       if (opts?.stallAuth === true) {
@@ -93,12 +103,17 @@ export async function startServer(
           pty = ptyFromInfo(info)
           acceptPty()
         })
+        // setWindow wants no reply, so there is nothing to accept here.
+        session.on('window-change', (_acceptChange, _rejectChange, info) => {
+          windowChanges.push({ cols: info.cols, rows: info.rows })
+        })
         session.on('shell', (acceptShell) => {
           shells += 1
           const stream = acceptShell()
           lastShell = stream
           stream.write(Buffer.from([0xff, 0xfe, 0x00, 0x61]))
           stream.on('data', (data: Buffer) => {
+            received.push(Buffer.from(data))
             stream.write(data)
           })
         })
@@ -125,6 +140,9 @@ export async function startServer(
     shellCount: () => shells,
     shellOpened: () => shells > 0,
     pty: () => pty,
+    windowChanges: () => [...windowChanges],
+    receivedBytes: () => Buffer.concat(received),
+    liveConnections: () => live,
     closeLastShell: () => {
       lastShell?.close()
     },
@@ -231,6 +249,20 @@ export function emitsHaveChunk(emits: CapturedEmit[], expected: Uint8Array): boo
     const chunk = event.payload.chunk
     return chunk instanceof Uint8Array && Buffer.from(chunk).equals(Buffer.from(expected))
   })
+}
+
+export function statusTypes(emits: CapturedEmit[], sessionId: string): string[] {
+  const types: string[] = []
+  for (const event of emits) {
+    if (event.channel !== 'ssh:status' || !isRecord(event.payload)) {
+      continue
+    }
+    if (event.payload.sessionId !== sessionId || typeof event.payload.type !== 'string') {
+      continue
+    }
+    types.push(event.payload.type)
+  }
+  return types
 }
 
 export function filesContain(dir: string, needle: string): boolean {
