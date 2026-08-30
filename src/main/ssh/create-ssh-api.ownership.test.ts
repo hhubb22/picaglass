@@ -5,40 +5,18 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SshApi, SshSender } from './create-ssh-api'
-import type { SshConnectResult } from '../../shared/ssh'
 import {
   type CapturedEmit,
   type TestServer,
   connectRequest,
   emitsHaveChunk,
   generateHostKey,
+  liveSession,
   startServer,
   statusTypes,
-  testApi
+  testApi,
+  waitForServerBytes
 } from './ssh-test-fixture'
-
-async function liveSession(api: SshApi, server: TestServer, sender: SshSender): Promise<string> {
-  const first = await api.connect(connectRequest(server.port), sender)
-  if (first.ok) {
-    return first.sessionId
-  }
-  if (first.reason !== 'host-unknown') {
-    throw new Error(`expected host-unknown, got ${JSON.stringify(first)}`)
-  }
-  const trusted = await api.confirmHostKey(first.sessionId, 'trust-always', sender)
-  if (!trusted.ok) {
-    throw new Error(`expected a live session, got ${JSON.stringify(trusted)}`)
-  }
-  return trusted.sessionId
-}
-
-async function waitForServerBytes(server: TestServer, probe: Uint8Array): Promise<void> {
-  await vi.waitFor(() => {
-    if (!server.receivedBytes().includes(Buffer.from(probe))) {
-      throw new Error('server has not seen the probe yet')
-    }
-  })
-}
 
 describe('createSshApi ownership', () => {
   let userDataPath: string | undefined
@@ -227,7 +205,7 @@ describe('createSshApi ownership', () => {
     expect(existsSync(join(userDataPath, 'ssh', 'known_hosts'))).toBe(true)
   })
 
-  it('a second connect from the same sender destroys the first session', async () => {
+  it('another sender cannot take over a live Connection Profile', async () => {
     userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
@@ -235,36 +213,19 @@ describe('createSshApi ownership', () => {
     api = testApi(userDataPath, { showMessageBox: async () => ({ response: 0 }) }, emits)
 
     const owner: SshSender = { id: 1 }
-    const firstId = await liveSession(api, server, owner)
-    const opening = Uint8Array.from([0x21])
-    api.write(firstId, opening, owner)
-    await waitForServerBytes(server, opening)
-
-    const second: SshConnectResult = await api.connect(connectRequest(server.port), owner)
-    if (!second.ok) {
-      throw new Error(`expected a second live session, got ${JSON.stringify(second)}`)
-    }
-    expect(second.sessionId).not.toBe(firstId)
-    expect(server.shellCount()).toBe(2)
-
-    await vi.waitFor(() => {
-      if (!statusTypes(emits, firstId).includes('closed')) {
-        throw new Error('the first session never reported closed')
-      }
+    const live = await liveSession(api, server, owner)
+    const stolen = await api.connect(connectRequest(server.port), { id: 2 })
+    expect(stolen).toEqual({
+      ok: false,
+      reason: 'invalid',
+      message: 'session already exists'
     })
+    expect(server.shellCount()).toBe(1)
 
-    const stale = Uint8Array.from([0x31, 0x32, 0x33])
-    api.write(firstId, stale, owner)
-    const fresh = Uint8Array.from([0x41])
-    api.write(second.sessionId, fresh, owner)
-    await waitForServerBytes(server, fresh)
-    expect(server.receivedBytes().includes(Buffer.from(stale))).toBe(false)
-
-    await vi.waitFor(() => {
-      if (server?.liveConnections() !== 1) {
-        throw new Error(`expected one live client, got ${server?.liveConnections()}`)
-      }
-    })
+    const probe = Uint8Array.from([0x41])
+    api.write(live, probe, owner)
+    await waitForServerBytes(server, probe)
+    expect(statusTypes(emits, live)).toEqual(['connected'])
   })
 
   it('closing one window ends only that window client', async () => {
@@ -274,8 +235,8 @@ describe('createSshApi ownership', () => {
     const emits: CapturedEmit[] = []
     api = testApi(userDataPath, { showMessageBox: async () => ({ response: 0 }) }, emits)
 
-    const closing = await liveSession(api, server, { id: 1 })
-    const staying = await liveSession(api, server, { id: 2 })
+    const closing = await liveSession(api, server, { id: 1 }, 'profile-a')
+    const staying = await liveSession(api, server, { id: 2 }, 'profile-b')
     expect(server.liveConnections()).toBe(2)
 
     api.disposeSender(1)
@@ -300,8 +261,8 @@ describe('createSshApi ownership', () => {
     server = await startServer(hostKey.pem)
     api = testApi(userDataPath, { showMessageBox: async () => ({ response: 0 }) })
 
-    await liveSession(api, server, { id: 1 })
-    await liveSession(api, server, { id: 2 })
+    await liveSession(api, server, { id: 1 }, 'profile-a')
+    await liveSession(api, server, { id: 2 }, 'profile-b')
     expect(server.liveConnections()).toBe(2)
 
     api.dispose()

@@ -2,10 +2,16 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync, readdirSync } from 'node:fs'
 import { createConnection, createServer, type Socket } from 'node:net'
 import { join } from 'node:path'
+import { vi } from 'vitest'
 import { Server } from 'ssh2'
-import { createSshApi, type SshApi, type SshDialogs } from './create-ssh-api'
+import { createSshApi, type SshApi, type SshDialogs, type SshSender } from './create-ssh-api'
 import { createSshEventInbox } from '../../shared/ssh-event-inbox'
-import type { SshAuth, SshConnectRequest, SshStatusEvent } from '../../shared/ssh'
+import {
+  SINGLE_FORM_PROFILE_ID,
+  type SshAuth,
+  type SshConnectRequest,
+  type SshStatusEvent
+} from '../../shared/ssh'
 
 export type TestSize = {
   cols: number
@@ -252,9 +258,9 @@ export async function tcpProxy(targetPort: number): Promise<TestProxy> {
   }
 }
 
-export function neverSettles(label: string): Promise<never> {
+export function neverSettles(label: string, ms = 1500): Promise<never> {
   return new Promise((_, reject) => {
-    setTimeout(() => reject(new Error(label)), 1500)
+    setTimeout(() => reject(new Error(label)), ms)
   })
 }
 
@@ -385,8 +391,13 @@ export function testApiWithInbox(
   })
 }
 
-export function connectRequest(port: number, auth?: SshAuth): SshConnectRequest {
+export function connectRequest(
+  port: number,
+  auth?: SshAuth,
+  profileId: string = SINGLE_FORM_PROFILE_ID
+): SshConnectRequest {
   return {
+    profileId,
     host: '127.0.0.1',
     port,
     username: 'tester',
@@ -394,4 +405,32 @@ export function connectRequest(port: number, auth?: SshAuth): SshConnectRequest 
     cols: 80,
     rows: 24
   }
+}
+
+export async function liveSession(
+  api: SshApi,
+  server: TestServer,
+  sender: SshSender,
+  profileId = SINGLE_FORM_PROFILE_ID
+): Promise<string> {
+  const first = await api.connect(connectRequest(server.port, undefined, profileId), sender)
+  if (first.ok) {
+    return first.sessionId
+  }
+  if (first.reason !== 'host-unknown') {
+    throw new Error(`expected host-unknown, got ${JSON.stringify(first)}`)
+  }
+  const trusted = await api.confirmHostKey(first.sessionId, 'trust-always', sender)
+  if (!trusted.ok) {
+    throw new Error(`expected a live session, got ${JSON.stringify(trusted)}`)
+  }
+  return trusted.sessionId
+}
+
+export async function waitForServerBytes(server: TestServer, probe: Uint8Array): Promise<void> {
+  await vi.waitFor(() => {
+    if (!server.receivedBytes().includes(Buffer.from(probe))) {
+      throw new Error('server has not seen the probe yet')
+    }
+  })
 }

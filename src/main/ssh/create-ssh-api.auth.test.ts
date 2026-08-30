@@ -203,7 +203,7 @@ describe('createSshApi auth', () => {
         showMessageBox: async () => ({ response: 0 })
       },
       emits,
-      { authTimeoutMs: 80 }
+      { authTimeoutMs: 1500 }
     )
 
     const unknown = await api.connect(connectRequest(server.port), { id: 1 })
@@ -212,11 +212,12 @@ describe('createSshApi auth', () => {
     }
     const trusted = await api.confirmHostKey(unknown.sessionId, 'trust-always', { id: 1 })
     if (!trusted.ok) {
-      throw new Error('expected a live session')
+      throw new Error(`expected a live session, got ${JSON.stringify(trusted)}`)
     }
 
+    // Wait past the auth timeout so a live session would drop if the timer were still armed.
     await new Promise((resolve) => {
-      setTimeout(resolve, 150)
+      setTimeout(resolve, 2000)
     })
 
     const closed = emits.some((event) => {
