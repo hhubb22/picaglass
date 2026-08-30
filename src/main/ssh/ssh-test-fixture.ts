@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import { readFileSync, readdirSync } from 'node:fs'
-import { createServer, type Socket } from 'node:net'
+import { createConnection, createServer, type Socket } from 'node:net'
 import { join } from 'node:path'
 import { Server } from 'ssh2'
 import { createSshApi, type SshApi, type SshDialogs } from './create-ssh-api'
@@ -185,6 +185,61 @@ export async function listenTcp(onConnection: (socket: Socket) => void): Promise
       new Promise((resolve, reject) => {
         for (const socket of sockets) {
           socket.destroy()
+        }
+        server.close((err) => {
+          if (err) {
+            reject(err)
+            return
+          }
+          resolve()
+        })
+      })
+  }
+}
+
+export type TestProxy = {
+  port: number
+  cut: () => void
+  close: () => Promise<void>
+}
+
+// A live session only loses its transport from the outside, so tests reach the server through
+// a proxy they can tear down under the shell.
+export async function tcpProxy(targetPort: number): Promise<TestProxy> {
+  const pairs: Array<{ inbound: Socket; outbound: Socket }> = []
+  const server = createServer((inbound) => {
+    const outbound = createConnection(targetPort, '127.0.0.1')
+    pairs.push({ inbound, outbound })
+    inbound.on('error', () => undefined)
+    outbound.on('error', () => undefined)
+    inbound.pipe(outbound)
+    outbound.pipe(inbound)
+  })
+  const port = await new Promise<number>((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address()
+      if (addr === null || typeof addr === 'string') {
+        reject(new Error('expected TCP address'))
+        return
+      }
+      resolve(addr.port)
+    })
+  })
+  return {
+    port,
+    // RST rather than a clean EOF, so the client reports a failure instead of a tidy exit.
+    cut: () => {
+      for (const pair of pairs) {
+        pair.outbound.destroy()
+        pair.inbound.resetAndDestroy()
+      }
+    },
+    close: () =>
+      new Promise((resolve, reject) => {
+        for (const pair of pairs) {
+          pair.inbound.destroy()
+          pair.outbound.destroy()
         }
         server.close((err) => {
           if (err) {

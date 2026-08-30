@@ -20,7 +20,6 @@
     "build:linux": "pnpm run build && electron-builder --linux"
   },
   "dependencies": {
-    "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
     "ssh2": "^1.17.0"
   },

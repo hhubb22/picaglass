@@ -1,5 +1,4 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { electronAPI } from '@electron-toolkit/preload'
 import type { RendererApi, SshStatusEvent } from '../shared/ssh'
 
 const api: RendererApi = {
@@ -51,5 +50,6 @@ if (!process.contextIsolated) {
   throw new Error('contextIsolation must be enabled')
 }
 
-contextBridge.exposeInMainWorld('electron', electronAPI)
+// Only the ssh methods cross the bridge. The toolkit's electronAPI would hand the page
+// ipcRenderer on any channel, which is the hole this contract exists to close.
 contextBridge.exposeInMainWorld('api', api)

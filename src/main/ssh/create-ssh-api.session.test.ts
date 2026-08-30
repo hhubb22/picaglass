@@ -10,6 +10,7 @@ import { createSshEventInbox } from '../../shared/ssh-event-inbox'
 import { runSshConnect, syncSshConnectInbox } from '../../shared/ssh-connect-ui'
 import {
   type CapturedEmit,
+  type TestProxy,
   type TestServer,
   connectRequest,
   dataChunk,
@@ -19,6 +20,8 @@ import {
   listenTcp,
   neverSettles,
   startServer,
+  statusTypes,
+  tcpProxy,
   testApi,
   testApiWithInbox
 } from './ssh-test-fixture'
@@ -28,10 +31,15 @@ describe('createSshApi session', () => {
   let api: SshApi | undefined
   let server: TestServer | undefined
   let tcp: { port: number; close: () => Promise<void> } | undefined
+  let proxy: TestProxy | undefined
 
   afterEach(async () => {
     api?.dispose()
     api = undefined
+    if (proxy) {
+      await proxy.close()
+      proxy = undefined
+    }
     if (server) {
       await server.close()
       server = undefined
@@ -354,6 +362,50 @@ describe('createSshApi session', () => {
 
     const leftover = await api.confirmHostKey(unknown.sessionId, 'abort', { id: 1 })
     expect(leftover).toEqual({ ok: false, reason: 'invalid', message: 'unknown session' })
+  })
+
+  it('a live session that loses its transport reports an error status with a message', async () => {
+    userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
+    const hostKey = generateHostKey(userDataPath)
+    server = await startServer(hostKey.pem)
+    proxy = await tcpProxy(server.port)
+    const emits: CapturedEmit[] = []
+    api = testApi(userDataPath, { showMessageBox: async () => ({ response: 0 }) }, emits)
+
+    const unknown = await api.connect(connectRequest(proxy.port), { id: 1 })
+    if (unknown.ok || unknown.reason !== 'host-unknown') {
+      throw new Error('expected host-unknown')
+    }
+    const trusted = await api.confirmHostKey(unknown.sessionId, 'trust-always', { id: 1 })
+    if (!trusted.ok) {
+      throw new Error('expected a live session')
+    }
+    const probe = Uint8Array.from([0x71, 0x72])
+    api.write(trusted.sessionId, probe, { id: 1 })
+    await vi.waitFor(() => {
+      if (!server?.receivedBytes().includes(Buffer.from(probe))) {
+        throw new Error('session is not live yet')
+      }
+    })
+
+    proxy.cut()
+
+    await vi.waitFor(() => {
+      if (!statusTypes(emits, trusted.sessionId).includes('error')) {
+        throw new Error(`no error status yet: ${statusTypes(emits, trusted.sessionId).join()}`)
+      }
+    })
+    expect(statusTypes(emits, trusted.sessionId)).toEqual(['connected', 'error'])
+    const failure = emits.find((event) => {
+      return (
+        event.channel === 'ssh:status' && isRecord(event.payload) && event.payload.type === 'error'
+      )
+    })
+    if (failure === undefined || !isRecord(failure.payload)) {
+      throw new Error('expected an error status')
+    }
+    expect(failure.payload.message).toEqual(expect.any(String))
+    expect(failure.payload.message).not.toBe('')
   })
 
   it('a corrupted private key reconnect does not drop the live session', async () => {

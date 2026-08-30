@@ -77,6 +77,7 @@ type SshSession = {
   settleOpen: ((result: SshConnectResult) => void) | undefined
   failHandshake: ((result: SshReady & { ok: false }) => void) | undefined
   confirming: boolean
+  ended: boolean
 }
 
 function invalid(message: string): { ok: false; reason: 'invalid'; message: string } {
@@ -295,6 +296,29 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
     }
   }
 
+  // A shell ends once, and the first cause wins. ssh2 surfaces a transport failure on the client
+  // before it tears the channel down, so a dropped connection reports error; a channel that
+  // closes on its own reports closed.
+  function endSession(
+    sessionId: string,
+    session: SshSession,
+    outcome: { type: 'closed' } | { type: 'error'; message: string }
+  ): void {
+    if (session.ended || session.stream === undefined) {
+      return
+    }
+    session.ended = true
+    if (outcome.type === 'error') {
+      deps.emitTo(session.senderId, 'ssh:status', {
+        sessionId,
+        type: 'error',
+        message: outcome.message
+      })
+      return
+    }
+    deps.emitTo(session.senderId, 'ssh:status', { sessionId, type: 'closed' })
+  }
+
   function openShell(sessionId: string): Promise<SshConnectResult> {
     const session = sessions.get(sessionId)
     if (session === undefined) {
@@ -342,10 +366,7 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
                 })
               })
               stream.on('close', () => {
-                deps.emitTo(session.senderId, 'ssh:status', {
-                  sessionId,
-                  type: 'closed'
-                })
+                endSession(sessionId, session, { type: 'closed' })
                 dropSession(sessionId)
               })
               deps.emitTo(session.senderId, 'ssh:status', {
@@ -438,7 +459,8 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
         clearAuthTimeout: () => undefined,
         settleOpen: undefined,
         failHandshake: undefined,
-        confirming: false
+        confirming: false,
+        ended: false
       }
       sessions.set(sessionId, session)
       client.on('ready', () => {
@@ -490,6 +512,7 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
         client.on('error', (err: Error) => {
           session.clearAuthTimeout()
           const failed = sshClientFailure(err)
+          endSession(sessionId, session, { type: 'error', message: failed.message })
           settleReady(failed)
           session.settleOpen?.(failed)
           settle(failed)
