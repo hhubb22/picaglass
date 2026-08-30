@@ -1,0 +1,3 @@
+# Discover a bounded POSIX Machine Snapshot
+
+After each successful SSH connection, Picaglass runs a fixed, read-only POSIX probe for hostname, kernel name, kernel release, and architecture; automatic discovery is enabled by default but may be disabled per Connection Profile. The latest successful Machine Snapshot and its observation time persist for disconnected use, manual refresh is available while connected, and probe failure only marks discovery unavailable without affecting the SSH Session. This deliberately trades audit-visible remote command execution and no Windows discovery for a useful, tightly bounded machine overview.
