@@ -1,335 +1,276 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { Terminal } from '@xterm/xterm'
-  import { FitAddon } from '@xterm/addon-fit'
-  import '@xterm/xterm/css/xterm.css'
-  import { createSshEventInbox } from '../../shared/ssh-event-inbox'
-  import { runSshConnect, syncSshConnectInbox } from '../../shared/ssh-connect-ui'
+  import {
+    isProfileDraftDirty,
+    parseProfileDraft,
+    type CreateProfileInput,
+    type ProfileDraftForm,
+    type ProfileFieldErrors,
+    type ProfileWorkspace
+  } from '../../shared/profile'
+  import AppDialog from './AppDialog.svelte'
+  import ProfileCreateForm from './ProfileCreateForm.svelte'
+  import ProfileSidebar from './ProfileSidebar.svelte'
+  import ProfileSummary from './ProfileSummary.svelte'
 
-  let host = $state('')
-  let port = $state('')
-  let username = $state('')
-  let password = $state('')
-  let passphrase = $state('')
-  let key = $state<{ keyRef: string; label: string } | null>(null)
+  let workspace = $state<ProfileWorkspace>({
+    profiles: [],
+    selectedProfileId: null,
+    notice: null
+  })
+  let pane = $state<'empty' | 'create' | 'profile'>('empty')
+  let draft = $state(emptyDraft())
+  let keyRef = $state<string | null>(null)
+  let keyLabel = $state<string | null>(null)
+  let fields = $state<ProfileFieldErrors>({})
   let busy = $state(false)
-  let error = $state<string | null>(null)
-  let pending = $state<{
-    sessionId: string
-    fingerprint: string
-    algorithm: string
-  } | null>(null)
-  let sessionId = $state<string | null>(null)
-  let termEl: HTMLDivElement | undefined = $state()
+  let duplicateLabel = $state<string | null>(null)
+  let discard = $state<
+    null | { kind: 'cancel' } | { kind: 'select'; profileId: string } | { kind: 'close' }
+  >(null)
 
-  const encoder = new TextEncoder()
-  let terminal: Terminal | undefined
-  let fitAddon: FitAddon | undefined
-  const inbox = createSshEventInbox({
-    onData(_id, chunk) {
-      terminal?.write(chunk)
-    },
-    onStatus(event) {
-      if (event.type === 'closed' || event.type === 'error') {
-        sessionId = null
-        if (event.type === 'error') {
-          error = event.message ?? event.type
-        }
-      }
-    }
+  const selected = $derived(
+    workspace.profiles.find((profile) => profile.id === workspace.selectedProfileId) ?? null
+  )
+  const dirtyCreation = $derived(pane === 'create' && isProfileDraftDirty(draft))
+
+  $effect(() => {
+    void window.api.workspace.setCloseGuard(dirtyCreation)
   })
 
-  function formLocked(): boolean {
-    return busy || pending !== null
+  function emptyDraft(): ProfileDraftForm {
+    return {
+      displayName: '',
+      host: '',
+      port: '',
+      username: '',
+      authMethod: null,
+      automaticDiscovery: true
+    }
   }
 
-  function queueFit(): void {
-    requestAnimationFrame(() => {
-      fitAddon?.fit()
-      const id = sessionId ?? pending?.sessionId ?? null
-      if (id !== null && terminal !== undefined) {
-        window.api.ssh.resize(id, terminal.cols, terminal.rows)
+  function resetDraft(): void {
+    draft = emptyDraft()
+    keyRef = null
+    keyLabel = null
+    fields = {}
+    duplicateLabel = null
+  }
+
+  function draftInput(saveAnyway = false): CreateProfileInput {
+    const input: CreateProfileInput = {
+      displayName: draft.displayName,
+      host: draft.host,
+      port: draft.port,
+      username: draft.username,
+      auth:
+        draft.authMethod === 'password'
+          ? { method: 'password' }
+          : draft.authMethod === 'privateKey'
+            ? { method: 'privateKey', keyRef: keyRef ?? '' }
+            : { method: undefined },
+      automaticDiscovery: draft.automaticDiscovery
+    }
+    if (saveAnyway) {
+      input.saveAnyway = true
+    }
+    return input
+  }
+
+  function beginCreate(): void {
+    if (pane === 'create' && isProfileDraftDirty(draft)) {
+      return
+    }
+    resetDraft()
+    pane = 'create'
+  }
+
+  async function selectProfile(profileId: string): Promise<void> {
+    if (pane === 'create' && isProfileDraftDirty(draft)) {
+      discard = { kind: 'select', profileId }
+      return
+    }
+    busy = true
+    try {
+      const result = await window.api.profiles.select(profileId)
+      workspace = result.workspace
+      pane = result.ok ? 'profile' : pane
+    } finally {
+      busy = false
+    }
+  }
+
+  async function save(saveAnyway = false): Promise<void> {
+    const input = draftInput(saveAnyway)
+    const parsed = parseProfileDraft(input)
+    if (!parsed.ok) {
+      fields = parsed.fields
+      return
+    }
+    fields = {}
+    busy = true
+    try {
+      const result = await window.api.profiles.create(input)
+      if (result.ok) {
+        workspace = result.workspace
+        resetDraft()
+        pane = 'profile'
+        return
       }
-    })
+      workspace = result.workspace
+      if (result.reason === 'duplicate') {
+        duplicateLabel = result.existingLabel
+        return
+      }
+      if (result.reason === 'invalid') {
+        fields = result.fields
+      }
+    } finally {
+      busy = false
+    }
   }
 
   async function pickKey(): Promise<void> {
-    error = null
-    key = await window.api.ssh.pickPrivateKey()
-  }
-
-  function connectAuth(
-    picked: { keyRef: string } | null,
-    passwordValue: string,
-    passphraseValue: string
-  ):
-    | { method: 'password'; password: string }
-    | { method: 'privateKey'; keyRef: string; passphrase?: string } {
+    const picked = await window.api.profiles.pickPrivateKey()
     if (picked === null) {
-      return { method: 'password', password: passwordValue }
-    }
-    if (passphraseValue.length > 0) {
-      return { method: 'privateKey', keyRef: picked.keyRef, passphrase: passphraseValue }
-    }
-    return { method: 'privateKey', keyRef: picked.keyRef }
-  }
-
-  async function connect(): Promise<void> {
-    busy = true
-    error = null
-    try {
-      const previous = sessionId
-      inbox.beginHandoff()
-      const next = await runSshConnect({
-        sessionId: previous,
-        currentSessionId: () => sessionId,
-        req: {
-          host,
-          port: port.trim() === '' ? undefined : Number(port),
-          username,
-          auth: connectAuth(key, password, passphrase),
-          cols: terminal?.cols ?? 80,
-          rows: terminal?.rows ?? 24
-        },
-        connect: (request) => window.api.ssh.connect(request)
-      })
-      password = ''
-      sessionId = next.sessionId
-      pending = next.pending
-      error = next.error
-      syncSshConnectInbox(inbox, next)
-      if (next.sessionId !== null || next.pending !== null) {
-        queueFit()
-      }
-      if (next.sessionId !== null && next.pending === null && next.error === null) {
-        terminal?.focus()
-      }
-    } catch (err) {
-      password = ''
-      error = err instanceof Error ? err.message : 'connect failed'
-      if (sessionId === null) {
-        inbox.deactivate()
-      } else {
-        inbox.endHandoff()
-      }
-    } finally {
-      busy = false
-    }
-  }
-
-  async function trust(): Promise<void> {
-    if (pending === null) {
       return
     }
-    busy = true
-    error = null
-    const pendingId = pending.sessionId
-    try {
-      inbox.beginHandoff()
-      const result = await window.api.ssh.confirmHostKey(pendingId, 'trust-always')
-      pending = null
-      if (result.ok) {
-        sessionId = result.sessionId
-        inbox.activate(result.sessionId)
-        queueFit()
-        terminal?.focus()
-        return
-      }
-      inbox.deactivate()
-      error = 'message' in result ? result.message : result.reason
-    } catch (err) {
-      pending = null
-      inbox.deactivate()
-      error = err instanceof Error ? err.message : 'trust failed'
-    } finally {
-      busy = false
-    }
+    keyRef = picked.keyRef
+    keyLabel = picked.label
+    draft.authMethod = 'privateKey'
   }
 
-  async function abort(): Promise<void> {
-    if (pending === null) {
+  function requestCancel(): void {
+    if (isProfileDraftDirty(draft)) {
+      discard = { kind: 'cancel' }
       return
     }
-    busy = true
-    const pendingId = pending.sessionId
-    try {
-      await window.api.ssh.confirmHostKey(pendingId, 'abort')
-      pending = null
-    } catch (err) {
-      pending = null
-      error = err instanceof Error ? err.message : 'abort failed'
-    } finally {
-      busy = false
-    }
+    leaveCreate()
   }
 
-  async function disconnect(): Promise<void> {
-    if (sessionId === null) {
+  function leaveCreate(): void {
+    resetDraft()
+    pane = workspace.selectedProfileId === null ? 'empty' : 'profile'
+  }
+
+  function confirmDiscard(): void {
+    const intent = discard
+    discard = null
+    if (intent?.kind === 'close') {
+      leaveCreate()
+      void window.api.workspace.confirmClose()
       return
     }
-    busy = true
-    const id = sessionId
-    try {
-      await window.api.ssh.disconnect(id)
-      sessionId = null
-      inbox.deactivate()
-    } catch (err) {
-      sessionId = null
-      inbox.deactivate()
-      error = err instanceof Error ? err.message : 'disconnect failed'
-    } finally {
-      busy = false
+    leaveCreate()
+    if (intent?.kind === 'select') {
+      void selectProfile(intent.profileId)
     }
   }
 
   onMount(() => {
-    const hostEl = termEl
-    if (hostEl === undefined) {
-      return
-    }
-    const term = new Terminal({ cursorBlink: true })
-    const fit = new FitAddon()
-    term.loadAddon(fit)
-    terminal = term
-    fitAddon = fit
-    term.open(hostEl)
-    queueFit()
-
-    const dataInput = term.onData((data) => {
-      if (sessionId === null) {
+    void window.api.profiles.load().then((loaded) => {
+      workspace = loaded
+      pane = loaded.selectedProfileId === null ? 'empty' : 'profile'
+    })
+    return window.api.workspace.onCloseRequested(() => {
+      if (pane === 'create' && isProfileDraftDirty(draft)) {
+        discard = { kind: 'close' }
         return
       }
-      window.api.ssh.write(sessionId, encoder.encode(data))
+      void window.api.workspace.confirmClose()
     })
-    const stopData = window.api.ssh.onData((id, chunk) => {
-      inbox.handleData(id, chunk)
-    })
-    const stopStatus = window.api.ssh.onStatus((event) => {
-      inbox.handleStatus(event)
-    })
-    const observer = new ResizeObserver(() => {
-      queueFit()
-    })
-    observer.observe(hostEl)
-
-    return () => {
-      dataInput.dispose()
-      stopData()
-      stopStatus()
-      observer.disconnect()
-      inbox.deactivate()
-      term.dispose()
-      terminal = undefined
-      fitAddon = undefined
-    }
   })
 </script>
 
-<main>
-  <section class="side">
-    <form
-      onsubmit={(event) => {
-        event.preventDefault()
-        void connect()
-      }}
-    >
-      <h1>连接</h1>
+<div class="app">
+  <ProfileSidebar
+    profiles={workspace.profiles}
+    selectedProfileId={workspace.selectedProfileId}
+    creating={pane === 'create'}
+    onCreate={beginCreate}
+    onSelect={(profileId) => void selectProfile(profileId)}
+  />
 
-      <label>
-        主机
-        <input bind:value={host} name="host" autocomplete="off" required disabled={formLocked()} />
-      </label>
+  <main>
+    {#if workspace.notice?.kind === 'recovered-from-backup'}
+      <p class="notice" role="status">
+        The profile store was unreadable and was restored from the last-valid backup. Recent changes
+        may be missing.
+      </p>
+    {/if}
+    {#if workspace.notice?.kind === 'write-failed'}
+      <p class="notice" role="alert">
+        The profile could not be saved. {workspace.notice.message} The last saved workspace is unchanged.
+      </p>
+    {/if}
 
-      <label>
-        端口
-        <input
-          bind:value={port}
-          name="port"
-          inputmode="numeric"
-          placeholder="22"
-          disabled={formLocked()}
-        />
-      </label>
-
-      <label>
-        用户名
-        <input
-          bind:value={username}
-          name="username"
-          autocomplete="username"
-          required
-          disabled={formLocked()}
-        />
-      </label>
-
-      <label>
-        密码
-        <input
-          bind:value={password}
-          name="password"
-          type="password"
-          autocomplete="current-password"
-          disabled={formLocked()}
-        />
-      </label>
-
-      <div class="key-row">
-        <span>私钥</span>
-        <span class="key-label">{key === null ? '未选择' : key.label}</span>
-        <button type="button" onclick={() => void pickKey()} disabled={formLocked()}
-          >选择私钥</button
-        >
-      </div>
-
-      <label>
-        密钥口令
-        <input
-          bind:value={passphrase}
-          name="passphrase"
-          type="password"
-          autocomplete="off"
-          disabled={formLocked() || key === null}
-        />
-      </label>
-
-      <button type="submit" disabled={formLocked()}>连接</button>
-      {#if sessionId !== null}
-        <button type="button" onclick={() => void disconnect()} disabled={busy}>断开</button>
-      {/if}
-    </form>
-
-    {#if pending}
-      <section class="host-key">
-        <h2>未知主机</h2>
-        <p>指纹</p>
-        <p class="fingerprint">{pending.fingerprint}</p>
-        <p>算法 {pending.algorithm}</p>
-        <div class="host-actions">
-          <button type="button" onclick={() => void trust()} disabled={busy}>信任</button>
-          <button type="button" onclick={() => void abort()} disabled={busy}>中止</button>
-        </div>
+    {#if pane === 'empty'}
+      <section class="empty">
+        <h1>Connection Profiles</h1>
+        <p>
+          A Connection Profile saves an SSH destination and its login preferences so you do not
+          re-enter them. Profiles stay on this computer; passwords and key passphrases are never
+          stored.
+        </p>
+        <button type="button" onclick={beginCreate}>Create Connection Profile</button>
       </section>
+    {:else if pane === 'create'}
+      <ProfileCreateForm
+        bind:draft
+        {keyLabel}
+        {fields}
+        {busy}
+        onPickKey={() => void pickKey()}
+        onSave={() => void save()}
+        onCancel={requestCancel}
+      />
+    {:else if selected !== null}
+      <ProfileSummary profile={selected} />
     {/if}
+  </main>
+</div>
 
-    {#if error}
-      <p class="error">{error}</p>
-    {/if}
-  </section>
+{#if duplicateLabel !== null}
+  <AppDialog
+    title="A Connection Profile with this configuration already exists"
+    confirmLabel="Save Anyway"
+    onConfirm={() => {
+      duplicateLabel = null
+      void save(true)
+    }}
+    onCancel={() => {
+      duplicateLabel = null
+    }}
+  >
+    <p>
+      “{duplicateLabel}” already uses this host, port, username, and Authentication Method. Saving
+      anyway creates a new profile with configuration only.
+    </p>
+  </AppDialog>
+{/if}
 
-  <section class="term-wrap">
-    <div class="terminal" bind:this={termEl}></div>
-  </section>
-</main>
+{#if discard !== null}
+  <AppDialog
+    title="Discard this unsaved Connection Profile?"
+    confirmLabel="Discard"
+    onConfirm={confirmDiscard}
+    onCancel={() => {
+      discard = null
+    }}
+  >
+    <p>Navigating away or closing will not keep this profile.</p>
+  </AppDialog>
+{/if}
 
 <style>
-  main {
+  .app {
     display: grid;
-    grid-template-columns: 20rem minmax(0, 1fr);
+    grid-template-columns: 18rem minmax(0, 1fr);
     height: 100%;
     min-height: 0;
   }
 
-  .side {
+  main {
     display: grid;
     align-content: start;
     gap: 16px;
@@ -337,68 +278,26 @@
     overflow: auto;
   }
 
-  form,
-  .host-key {
+  .empty {
     display: grid;
     gap: 12px;
+    max-width: 36rem;
   }
 
-  h1,
-  h2 {
+  h1 {
     font-size: 1.25rem;
     font-weight: 600;
   }
 
-  label {
-    display: grid;
-    gap: 4px;
-    font-size: 0.875rem;
+  .notice {
+    border: 1px solid #111;
+    padding: 10px 12px;
+    background: #f3f3f3;
   }
 
-  input,
   button {
     font: inherit;
     padding: 8px 10px;
-  }
-
-  .key-row {
-    display: grid;
-    grid-template-columns: auto 1fr auto;
-    gap: 8px;
-    align-items: center;
-    font-size: 0.875rem;
-  }
-
-  .key-label {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .fingerprint {
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    word-break: break-all;
-  }
-
-  .host-actions {
-    display: flex;
-    gap: 8px;
-  }
-
-  .error {
-    color: #b00020;
-  }
-
-  .term-wrap {
-    min-width: 0;
-    min-height: 0;
-    height: 100%;
-    padding: 8px;
-    background: #111;
-  }
-
-  .terminal {
-    height: 100%;
-    width: 100%;
+    justify-self: start;
   }
 </style>

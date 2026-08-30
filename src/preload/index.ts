@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { RendererApi, SshStatusEvent } from '../shared/ssh'
+import type { CreateProfileInput } from '../shared/profile'
 
 const api: RendererApi = {
   ssh: {
@@ -43,6 +44,25 @@ const api: RendererApi = {
         ipcRenderer.removeListener('ssh:status', listener)
       }
     }
+  },
+  profiles: {
+    load: () => ipcRenderer.invoke('profiles:load'),
+    create: (input: CreateProfileInput) => ipcRenderer.invoke('profiles:create', input),
+    select: (profileId) => ipcRenderer.invoke('profiles:select', profileId),
+    pickPrivateKey: () => ipcRenderer.invoke('profiles:pickPrivateKey')
+  },
+  workspace: {
+    onCloseRequested: (handler) => {
+      const listener = (): void => {
+        handler()
+      }
+      ipcRenderer.on('workspace:close-requested', listener)
+      return () => {
+        ipcRenderer.removeListener('workspace:close-requested', listener)
+      }
+    },
+    confirmClose: () => ipcRenderer.invoke('workspace:confirmClose'),
+    setCloseGuard: (blockClose) => ipcRenderer.invoke('workspace:setCloseGuard', blockClose)
   }
 }
 
@@ -50,6 +70,6 @@ if (!process.contextIsolated) {
   throw new Error('contextIsolation must be enabled')
 }
 
-// Only the ssh methods cross the bridge. The toolkit's electronAPI would hand the page
-// ipcRenderer on any channel, which is the hole this contract exists to close.
+// Only the ssh, profiles, and workspace methods cross the bridge. The toolkit's electronAPI
+// would hand the page ipcRenderer on any channel, which is the hole this contract exists to close.
 contextBridge.exposeInMainWorld('api', api)

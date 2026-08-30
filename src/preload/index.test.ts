@@ -36,7 +36,7 @@ describe('preload bridge', () => {
     if (typeof api !== 'object' || api === null) {
       throw new Error('expected an api object')
     }
-    expect(Object.keys(api)).toEqual(['ssh'])
+    expect(Object.keys(api).sort()).toEqual(['profiles', 'ssh', 'workspace'])
     const ssh = (api as { ssh: unknown }).ssh
     if (typeof ssh !== 'object' || ssh === null) {
       throw new Error('expected an ssh object')
@@ -50,6 +50,20 @@ describe('preload bridge', () => {
       'pickPrivateKey',
       'resize',
       'write'
+    ])
+    const profiles = (api as { profiles: unknown }).profiles
+    if (typeof profiles !== 'object' || profiles === null) {
+      throw new Error('expected a profiles object')
+    }
+    expect(Object.keys(profiles).sort()).toEqual(['create', 'load', 'pickPrivateKey', 'select'])
+    const workspace = (api as { workspace: unknown }).workspace
+    if (typeof workspace !== 'object' || workspace === null) {
+      throw new Error('expected a workspace object')
+    }
+    expect(Object.keys(workspace).sort()).toEqual([
+      'confirmClose',
+      'onCloseRequested',
+      'setCloseGuard'
     ])
   })
 })

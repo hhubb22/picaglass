@@ -1,3 +1,11 @@
+import type {
+  CreateProfileInput,
+  CreateProfileResult,
+  ProfileKeyPick,
+  ProfileWorkspace,
+  SelectProfileResult
+} from './profile'
+
 export type SshAuth =
   | { method: 'password'; password: string }
   | { method: 'privateKey'; keyRef: string; passphrase?: string }
@@ -39,5 +47,16 @@ export type RendererApi = {
     disconnect: (sessionId: string) => Promise<void>
     onData: (handler: (sessionId: string, chunk: Uint8Array) => void) => () => void
     onStatus: (handler: (event: SshStatusEvent) => void) => () => void
+  }
+  profiles: {
+    load: () => Promise<ProfileWorkspace>
+    create: (input: CreateProfileInput) => Promise<CreateProfileResult>
+    select: (profileId: string) => Promise<SelectProfileResult>
+    pickPrivateKey: () => Promise<ProfileKeyPick | null>
+  }
+  workspace: {
+    onCloseRequested: (handler: () => void) => () => void
+    confirmClose: () => Promise<void>
+    setCloseGuard: (blockClose: boolean) => Promise<void>
   }
 }
