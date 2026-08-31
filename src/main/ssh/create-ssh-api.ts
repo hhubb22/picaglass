@@ -980,7 +980,10 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
             return
           }
           settled = true
-          resolve(result)
+          // Resolve outside ssh2's socket callback so Electron IPC delivers the invoke reply.
+          queueMicrotask(() => {
+            resolve(result)
+          })
         }
 
         let authTimer: ReturnType<typeof setTimeout> | undefined

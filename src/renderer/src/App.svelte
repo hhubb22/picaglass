@@ -109,6 +109,13 @@
   let searchQuery = $state('')
   let liveAnnouncement = $state('')
   let sidebar = $state<{ focusSearch: () => void } | null>(null)
+  const connectEpoch: Record<string, number> = {}
+
+  function bumpConnectEpoch(profileId: string): number {
+    const next = (connectEpoch[profileId] ?? 0) + 1
+    connectEpoch[profileId] = next
+    return next
+  }
 
   const selected = $derived(
     workspace.profiles.find((profile) => profile.id === workspace.selectedProfileId) ?? null
@@ -415,6 +422,7 @@
   async function runConnect(profileId: string, secret?: string): Promise<void> {
     const origin = focusContext(profileId)
     const previous = sessionOf(profileId).lastOutcome
+    const epoch = bumpConnectEpoch(profileId)
     applySessionUi(profileId, {
       ...sessionOf(profileId),
       state: 'connecting',
@@ -422,7 +430,6 @@
       error: null
     })
     ensureTerminalId(profileId)
-    await tick()
     const nextTranscript = beginAttempt(
       transcripts[profileId] ?? [],
       new Date(),
@@ -434,12 +441,24 @@
       registry.writeLocal(profileId, formatSeparatorText(separator))
     }
     const size = registry.size(profileId)
-    const result = await window.api.ssh.connect({
-      profileId,
-      secret,
-      cols: size?.cols ?? 80,
-      rows: size?.rows ?? 24
-    })
+    let result: SshConnectResult
+    try {
+      result = await window.api.ssh.connect({
+        profileId,
+        secret,
+        cols: size?.cols ?? 80,
+        rows: size?.rows ?? 24
+      })
+    } catch (err) {
+      if (connectEpoch[profileId] !== epoch) {
+        return
+      }
+      const message = err instanceof Error ? err.message : 'cannot connect'
+      result = { ok: false, reason: 'network', message }
+    }
+    if (connectEpoch[profileId] !== epoch) {
+      return
+    }
     const next = applyConnectResult(sessionOf(profileId), result)
     applySessionUi(profileId, next, connectFailureDetail(result, next))
     await refreshAttempts()
@@ -468,7 +487,20 @@
       return
     }
     replaceConfirm = false
-    const result = await window.api.ssh.confirmHostKey(pending.sessionId, action)
+    const epoch = bumpConnectEpoch(profileId)
+    let result: SshConnectResult
+    try {
+      result = await window.api.ssh.confirmHostKey(pending.sessionId, action)
+    } catch (err) {
+      if (connectEpoch[profileId] !== epoch) {
+        return
+      }
+      const message = err instanceof Error ? err.message : 'cannot connect'
+      result = { ok: false, reason: 'network', message }
+    }
+    if (connectEpoch[profileId] !== epoch) {
+      return
+    }
     const next = applyConnectResult({ ...sessionOf(profileId), state: 'connecting' }, result)
     applySessionUi(profileId, next, connectFailureDetail(result, next))
     await refreshAttempts()
@@ -497,6 +529,7 @@
       return
     }
     replaceConfirm = false
+    bumpConnectEpoch(profileId)
     const result = await window.api.ssh.confirmHostKey(pending.sessionId, 'abort')
     const next = applyConnectResult(sessionOf(profileId), result)
     applySessionUi(profileId, next, connectFailureDetail(result, next))
@@ -572,6 +605,7 @@
     await window.api.ssh.disconnectAll()
     for (const [profileId, ui] of Object.entries(sessions)) {
       if (canCancelAttempt(ui.state)) {
+        bumpConnectEpoch(profileId)
         applySessionUi(
           profileId,
           applyConnectResult(ui, { ok: false, reason: 'canceled', message: 'canceled' })
@@ -592,6 +626,7 @@
     if (!canCancelAttempt(current.state)) {
       return
     }
+    bumpConnectEpoch(profileId)
     await window.api.ssh.cancel(profileId)
     const next = sessionOf(profileId)
     if (canCancelAttempt(next.state)) {
