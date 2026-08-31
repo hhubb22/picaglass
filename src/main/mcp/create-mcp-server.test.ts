@@ -10,6 +10,7 @@ import type { InterfaceStatusRun } from '../../shared/picos/interface-status'
 import type { L2Run } from '../../shared/picos/l2'
 import type { L3Run } from '../../shared/picos/l3'
 import type { LogsRun } from '../../shared/picos/logs'
+import type { RunShowRun } from '../../shared/picos/run-show'
 import {
   idleTechSupportSnapshot,
   type TechSupportSnapshot,
@@ -367,6 +368,7 @@ describe('embedded MCP server', () => {
     runL2?: (profileId: string) => Promise<L2Run>
     runL3?: (profileId: string) => Promise<L3Run>
     runLogs?: (profileId: string, lines?: number) => Promise<LogsRun>
+    runShow?: (profileId: string, command: string) => Promise<RunShowRun>
     startTechSupport?: (profileId: string) => Promise<TechSupportStartResult>
     getTechSupport?: (profileId: string) => TechSupportSnapshot
     createToken?: () => string
@@ -383,6 +385,7 @@ describe('embedded MCP server', () => {
       runL2: async () => ({ kind: 'no-session' }),
       runL3: async () => ({ kind: 'no-session' }),
       runLogs: async () => ({ kind: 'no-session' }),
+      runShow: async () => ({ kind: 'no-session' }),
       startTechSupport: async () => ({ kind: 'no-session' }),
       getTechSupport: (profileId) => idleTechSupportSnapshot(profileId),
       createToken: () => TOKEN,
@@ -1297,5 +1300,229 @@ describe('embedded MCP server', () => {
     })
     expect(result.isError).toBe(true)
     expect(result.text).toBe('Unknown tech_support handle: missing')
+  })
+
+  it('returns structured data for a whitelisted show command that has a parser', async () => {
+    const seen: Array<{ profileId: string; command: string }> = []
+    const { handle } = await start({
+      listProfiles: async () => [{ id: 'p-lab', label: 'lab switch' }],
+      hasLiveSession: (profileId) => profileId === 'p-lab',
+      runShow: async (profileId, command) => {
+        seen.push({ profileId, command })
+        return {
+          kind: 'ok',
+          command: 'show version | no-more',
+          result: { status: 'parsed', data: versionData, raw: 'version-raw' },
+          raw: 'version-raw'
+        }
+      }
+    })
+    const sessionId = await openSession(handle)
+    const result = await callTool(handle, sessionId, 'run_show', {
+      profile: 'p-lab',
+      command: 'show version'
+    })
+    expect(seen).toEqual([{ profileId: 'p-lab', command: 'show version' }])
+    expect(result.isError).toBe(false)
+    expect(result.json).toEqual({
+      profile: { id: 'p-lab', label: 'lab switch' },
+      command: 'show version | no-more',
+      result: { status: 'parsed', data: versionData }
+    })
+    expect(JSON.stringify(result.json)).not.toContain('version-raw')
+    const withRaw = await callTool(handle, sessionId, 'run_show', {
+      profile: 'p-lab',
+      command: 'show version',
+      includeRaw: true
+    })
+    expect(withRaw.json).toMatchObject({
+      result: { status: 'parsed', data: versionData, raw: 'version-raw' }
+    })
+  })
+
+  it('returns raw text for a whitelisted show or ping that has no parser', async () => {
+    const seen: string[] = []
+    const { handle } = await start({
+      listProfiles: async () => [{ id: 'p-lab', label: 'lab switch' }],
+      hasLiveSession: () => true,
+      runShow: async (_profileId, command) => {
+        seen.push(command)
+        if (command.startsWith('ping')) {
+          return {
+            kind: 'ok',
+            command: 'ping 192.0.2.1 count 5 | no-more',
+            result: { status: 'raw', raw: 'PING 192.0.2.1: 56 data bytes' },
+            raw: 'PING 192.0.2.1: 56 data bytes'
+          }
+        }
+        return {
+          kind: 'ok',
+          command: 'show spanning-tree | no-more',
+          result: { status: 'raw', raw: 'STP is not enabled' },
+          raw: 'STP is not enabled'
+        }
+      }
+    })
+    const sessionId = await openSession(handle)
+    const show = await callTool(handle, sessionId, 'run_show', {
+      profile: 'p-lab',
+      command: 'show spanning-tree'
+    })
+    const ping = await callTool(handle, sessionId, 'run_show', {
+      profile: 'p-lab',
+      command: 'ping 192.0.2.1'
+    })
+    expect(seen).toEqual(['show spanning-tree', 'ping 192.0.2.1'])
+    expect(show.isError).toBe(false)
+    expect(show.json).toEqual({
+      profile: { id: 'p-lab', label: 'lab switch' },
+      command: 'show spanning-tree | no-more',
+      result: { status: 'raw', raw: 'STP is not enabled' }
+    })
+    expect(ping.isError).toBe(false)
+    expect(ping.json).toEqual({
+      profile: { id: 'p-lab', label: 'lab switch' },
+      command: 'ping 192.0.2.1 count 5 | no-more',
+      result: { status: 'raw', raw: 'PING 192.0.2.1: 56 data bytes' }
+    })
+  })
+
+  it('rejects configuration, chaining, and non-whitelisted pipes in the tool itself', async () => {
+    const seen: string[] = []
+    const { handle } = await start({
+      listProfiles: async () => [{ id: 'p-lab', label: 'lab switch' }],
+      hasLiveSession: () => true,
+      runShow: async (_profileId, command) => {
+        seen.push(command)
+        return { kind: 'no-session' }
+      }
+    })
+    const sessionId = await openSession(handle)
+    const configure = await callTool(handle, sessionId, 'run_show', {
+      profile: 'p-lab',
+      command: 'configure'
+    })
+    const chained = await callTool(handle, sessionId, 'run_show', {
+      profile: 'p-lab',
+      command: 'show version; configure'
+    })
+    const pipe = await callTool(handle, sessionId, 'run_show', {
+      profile: 'p-lab',
+      command: 'show version | display xml'
+    })
+    const fileDelete = await callTool(handle, sessionId, 'run_show', {
+      profile: 'p-lab',
+      command: 'file delete /tmp/x'
+    })
+    expect(seen).toEqual([])
+    expect(configure).toEqual({
+      isError: true,
+      text: 'run_show only allows show and ping commands.',
+      json: undefined
+    })
+    expect(chained.isError).toBe(true)
+    expect(chained.text).toBe('run_show does not allow command chaining.')
+    expect(pipe.isError).toBe(true)
+    expect(pipe.text).toBe('run_show does not allow the "display" pipe filter.')
+    expect(fileDelete.isError).toBe(true)
+    expect(fileDelete.text).toBe('run_show only allows show and ping commands.')
+  })
+
+  it('rejects an invalid ping target and an over-limit ping count without executing', async () => {
+    const seen: string[] = []
+    const { handle } = await start({
+      listProfiles: async () => [{ id: 'p-lab', label: 'lab switch' }],
+      hasLiveSession: () => true,
+      runShow: async (_profileId, command) => {
+        seen.push(command)
+        return { kind: 'no-session' }
+      }
+    })
+    const sessionId = await openSession(handle)
+    const badTarget = await callTool(handle, sessionId, 'run_show', {
+      profile: 'p-lab',
+      command: 'ping 999.999.999.999'
+    })
+    const overCount = await callTool(handle, sessionId, 'run_show', {
+      profile: 'p-lab',
+      command: 'ping 192.0.2.1 count 21'
+    })
+    expect(seen).toEqual([])
+    expect(badTarget.isError).toBe(true)
+    expect(badTarget.text).toBe('invalid ping target: "999.999.999.999"')
+    expect(overCount.isError).toBe(true)
+    expect(overCount.text).toBe('invalid ping count: 21')
+  })
+
+  it('returns a protocol error when run_show has no active SSH Session', async () => {
+    const seen: string[] = []
+    const { handle } = await start({
+      listProfiles: async () => [{ id: 'p-lab', label: 'lab switch' }],
+      hasLiveSession: () => false,
+      runShow: async (_profileId, command) => {
+        seen.push(command)
+        return { kind: 'no-session' }
+      }
+    })
+    const sessionId = await openSession(handle)
+    const result = await callTool(handle, sessionId, 'run_show', {
+      profile: 'lab switch',
+      command: 'show version'
+    })
+    expect(result.isError).toBe(true)
+    expect(result.text).toBe('No active SSH Session for profile lab switch.')
+    expect(seen).toEqual([])
+  })
+
+  it('returns parse-failed from run_show as a normal payload with raw and reason', async () => {
+    const { handle } = await start({
+      listProfiles: async () => [{ id: 'p-lab', label: 'lab switch' }],
+      hasLiveSession: () => true,
+      runShow: async () => ({
+        kind: 'ok',
+        command: 'show version | no-more',
+        result: {
+          status: 'parse-failed',
+          reason: 'missing version skeleton',
+          raw: 'not a version listing'
+        },
+        raw: 'not a version listing'
+      })
+    })
+    const sessionId = await openSession(handle)
+    const result = await callTool(handle, sessionId, 'run_show', {
+      profile: 'p-lab',
+      command: 'show version'
+    })
+    expect(result.isError).toBe(false)
+    expect(result.json).toEqual({
+      profile: { id: 'p-lab', label: 'lab switch' },
+      command: 'show version | no-more',
+      result: {
+        status: 'parse-failed',
+        reason: 'missing version skeleton',
+        raw: 'not a version listing'
+      }
+    })
+  })
+
+  it('returns a protocol error with exit code and stderr head when run_show channel fails', async () => {
+    const { handle } = await start({
+      listProfiles: async () => [{ id: 'p-lab', label: 'lab switch' }],
+      hasLiveSession: () => true,
+      runShow: async () => ({
+        kind: 'channel-failed',
+        reason: 'nonzero-exit',
+        exitCode: 1,
+        stderrHead: "syntax error, expecting 'analyzer'\n"
+      })
+    })
+    const sessionId = await openSession(handle)
+    const result = await callTool(handle, sessionId, 'run_show', {
+      profile: 'p-lab',
+      command: 'show version'
+    })
+    expect(result.isError).toBe(true)
+    expect(result.text).toBe("Command failed (exit 1).\nsyntax error, expecting 'analyzer'\n")
   })
 })
