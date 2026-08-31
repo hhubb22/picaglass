@@ -25,6 +25,7 @@ import {
 import {
   authorizeRunShow,
   parseRunShowOutput,
+  type AuthorizeRunShow,
   type RunShowChannelFailure,
   type RunShowRun
 } from '../../shared/picos/run-show'
@@ -497,11 +498,10 @@ export function createDiagnosticsApi(deps: CreateDiagnosticsApiDeps): Diagnostic
     return { kind: 'ok', block, raw: framed.cleaned }
   }
 
-  async function runShowOnce(profileId: string, command: string): Promise<RunShowRun> {
-    const authorized = authorizeRunShow(command)
-    if (!authorized.ok) {
-      return { kind: 'rejected', reason: authorized.reason }
-    }
+  async function runShowOnce(
+    profileId: string,
+    authorized: Extract<AuthorizeRunShow, { ok: true }>
+  ): Promise<RunShowRun> {
     if (!deps.hasLiveSession(profileId)) {
       return { kind: 'no-session' }
     }
@@ -516,8 +516,8 @@ export function createDiagnosticsApi(deps: CreateDiagnosticsApiDeps): Diagnostic
         : framed.cleaned
     return {
       kind: 'ok',
-      command: authorized.inner,
-      result: parseRunShowOutput(authorized.inner, raw),
+      command: authorized.command,
+      result: parseRunShowOutput(authorized.command, raw),
       raw: framed.cleaned
     }
   }
@@ -569,7 +569,7 @@ export function createDiagnosticsApi(deps: CreateDiagnosticsApiDeps): Diagnostic
       if (!authorized.ok) {
         return Promise.resolve({ kind: 'rejected', reason: authorized.reason })
       }
-      return dedupe(`run-show:${id}:${authorized.inner}`, () => runShowOnce(id, command))
+      return dedupe(`run-show:${id}:${authorized.command}`, () => runShowOnce(id, authorized))
     },
     startTechSupport,
     getTechSupport(profileId) {

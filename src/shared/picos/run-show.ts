@@ -34,9 +34,7 @@ import { parseSyslog } from './logs'
 export const DEFAULT_PING_COUNT = 5
 export const MAX_PING_COUNT = 20
 
-export const RUN_SHOW_PIPE_FILTERS = ['count', 'except', 'find', 'match', 'no-more'] as const
-
-const PIPE_FILTERS = new Set<string>(RUN_SHOW_PIPE_FILTERS)
+const PIPE_FILTERS = new Set(['count', 'except', 'find', 'match', 'no-more'])
 const BARE_FILTERS = new Set(['count', 'no-more'])
 const PATTERN_FILTERS = new Set(['except', 'find', 'match'])
 const UNQUOTED_TOKEN = /^[A-Za-z0-9/._:()+*-]+$/
@@ -50,7 +48,7 @@ const NO_CHAINING = 'run_show does not allow command chaining.'
 const PING_SHAPE = 'run_show ping takes a single target and optional count.'
 
 export type AuthorizeRunShow =
-  | { ok: true; verb: 'show' | 'ping'; inner: string; cliCommand: string }
+  | { ok: true; verb: 'show' | 'ping'; command: string; cliCommand: string }
   | { ok: false; reason: string }
 
 export type RunShowOutput = ParsedResult<unknown> | { status: 'raw'; raw: string }
@@ -342,24 +340,34 @@ export function authorizeRunShow(command: string): AuthorizeRunShow {
     if (args.length === 0) {
       return reject(ONLY_SHOW_OR_PING)
     }
-    const inner = reconstruct(
+    const authorizedCommand = reconstruct(
       'show',
       args.map((token) => (token.quoted ? formatToken(token) : token.value.toLowerCase())),
       filters
     )
-    return { ok: true, verb: 'show', inner, cliCommand: wrapCli(inner) }
+    return {
+      ok: true,
+      verb: 'show',
+      command: authorizedCommand,
+      cliCommand: wrapCli(authorizedCommand)
+    }
   }
 
   const ping = parsePingArgs(commandSegment.slice(1))
   if (!ping.ok) {
     return ping
   }
-  const inner = reconstruct('ping', [ping.target, 'count', String(ping.count)], filters)
-  return { ok: true, verb: 'ping', inner, cliCommand: wrapCli(inner) }
+  const authorizedCommand = reconstruct('ping', [ping.target, 'count', String(ping.count)], filters)
+  return {
+    ok: true,
+    verb: 'ping',
+    command: authorizedCommand,
+    cliCommand: wrapCli(authorizedCommand)
+  }
 }
 
-export function parseRunShowOutput(inner: string, raw: string): RunShowOutput {
-  const base = normalizeShowCommand(inner)
+export function parseRunShowOutput(command: string, raw: string): RunShowOutput {
+  const base = normalizeShowCommand(command)
   if (base.includes('|') || /^\s*ping\b/i.test(base)) {
     return { status: 'raw', raw }
   }

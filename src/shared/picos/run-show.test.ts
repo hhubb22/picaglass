@@ -18,7 +18,7 @@ describe('authorizeRunShow', () => {
     expect(authorizeRunShow('show version')).toEqual({
       ok: true,
       verb: 'show',
-      inner: 'show version | no-more',
+      command: 'show version | no-more',
       cliCommand: "cli -c 'show version | no-more'"
     })
   })
@@ -27,7 +27,7 @@ describe('authorizeRunShow', () => {
     expect(authorizeRunShow('  SHOW VERSION |  NO-MORE  ')).toEqual({
       ok: true,
       verb: 'show',
-      inner: 'show version | no-more',
+      command: 'show version | no-more',
       cliCommand: "cli -c 'show version | no-more'"
     })
   })
@@ -38,7 +38,7 @@ describe('authorizeRunShow', () => {
     ).toEqual({
       ok: true,
       verb: 'show',
-      inner: 'show log | match "BGP down" | except keep | find PICOS | count | no-more',
+      command: 'show log | match "BGP down" | except keep | find PICOS | count | no-more',
       cliCommand:
         'cli -c \'show log | match "BGP down" | except keep | find PICOS | count | no-more\''
     })
@@ -48,7 +48,7 @@ describe('authorizeRunShow', () => {
     expect(authorizeRunShow('show interface detail te-1/1/1(29)')).toEqual({
       ok: true,
       verb: 'show',
-      inner: 'show interface detail te-1/1/1(29) | no-more',
+      command: 'show interface detail te-1/1/1(29) | no-more',
       cliCommand: "cli -c 'show interface detail te-1/1/1(29) | no-more'"
     })
   })
@@ -141,7 +141,7 @@ describe('authorizeRunShow', () => {
     expect(authorizeRunShow('ping 192.0.2.1')).toEqual({
       ok: true,
       verb: 'ping',
-      inner: 'ping 192.0.2.1 count 5 | no-more',
+      command: 'ping 192.0.2.1 count 5 | no-more',
       cliCommand: "cli -c 'ping 192.0.2.1 count 5 | no-more'"
     })
   })
@@ -151,7 +151,7 @@ describe('authorizeRunShow', () => {
     expect(authorizeRunShow('ping lab-switch.example count 20')).toEqual({
       ok: true,
       verb: 'ping',
-      inner: 'ping lab-switch.example count 20 | no-more',
+      command: 'ping lab-switch.example count 20 | no-more',
       cliCommand: "cli -c 'ping lab-switch.example count 20 | no-more'"
     })
   })
@@ -160,7 +160,7 @@ describe('authorizeRunShow', () => {
     expect(authorizeRunShow('ping 2001:db8::1 count 3')).toEqual({
       ok: true,
       verb: 'ping',
-      inner: 'ping 2001:db8::1 count 3 | no-more',
+      command: 'ping 2001:db8::1 count 3 | no-more',
       cliCommand: "cli -c 'ping 2001:db8::1 count 3 | no-more'"
     })
   })
@@ -207,7 +207,7 @@ describe('authorizeRunShow', () => {
     expect(authorizeRunShow(`show log | match "it's down"`)).toEqual({
       ok: true,
       verb: 'show',
-      inner: `show log | match "it's down" | no-more`,
+      command: `show log | match "it's down" | no-more`,
       cliCommand: `cli -c 'show log | match "it'\\''s down" | no-more'`
     })
   })
