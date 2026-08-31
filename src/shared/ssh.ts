@@ -1,4 +1,5 @@
 import type { MachineSnapshot } from './machine-snapshot'
+import type { DeviceFactsRun } from './picos/device-facts'
 import type {
   CreateProfileInput,
   CreateProfileResult,
@@ -105,6 +106,9 @@ export type RendererApi = {
     ) => () => void
     onStatus: (handler: (event: SshStatusEvent) => void) => () => void
     onSnapshot: (handler: (event: MachineSnapshotEvent) => void) => () => void
+  }
+  diagnostics: {
+    runDeviceFacts: (profileId: string) => Promise<DeviceFactsRun>
   }
   profiles: {
     load: () => Promise<ProfileWorkspace>

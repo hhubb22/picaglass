@@ -80,6 +80,9 @@ const api: RendererApi = {
       }
     }
   },
+  diagnostics: {
+    runDeviceFacts: (profileId) => ipcRenderer.invoke('diagnostics:runDeviceFacts', profileId)
+  },
   profiles: {
     load: () => ipcRenderer.invoke('profiles:load'),
     create: (input: CreateProfileInput) => ipcRenderer.invoke('profiles:create', input),
@@ -117,6 +120,6 @@ if (!process.contextIsolated) {
   throw new Error('contextIsolation must be enabled')
 }
 
-// Only the ssh, profiles, and workspace methods cross the bridge. The toolkit's electronAPI
-// would hand the page ipcRenderer on any channel, which is the hole this contract exists to close.
+// Only the ssh, diagnostics, profiles, and workspace methods cross the bridge. The toolkit's
+// electronAPI would hand the page ipcRenderer on any channel, which is the hole this contract exists to close.
 contextBridge.exposeInMainWorld('api', api)

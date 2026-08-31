@@ -18,6 +18,7 @@
   } from '../../shared/connection-attempt'
   import type { TerminalRegistry } from './terminal-registry'
   import ProfileTerminalHost from './ProfileTerminalHost.svelte'
+  import DiagnosticsPanel from './DiagnosticsPanel.svelte'
   import SessionStateMark from './SessionStateMark.svelte'
 
   let {
@@ -306,14 +307,17 @@
         <button type="button" onclick={onClearTerminal}>Clear Terminal</button>
       </div>
     {/if}
-    <div class="term-pool" class:hidden={showTerminalEmpty}>
-      {#each terminalIds as id (id)}
-        <ProfileTerminalHost
-          profileId={id}
-          {registry}
-          hidden={id !== profile.id || tab !== 'terminal' || showTerminalEmpty}
-        />
-      {/each}
+    <div class="term-and-diagnostics">
+      <div class="term-pool" class:hidden={showTerminalEmpty}>
+        {#each terminalIds as id (id)}
+          <ProfileTerminalHost
+            profileId={id}
+            {registry}
+            hidden={id !== profile.id || tab !== 'terminal' || showTerminalEmpty}
+          />
+        {/each}
+      </div>
+      <DiagnosticsPanel profileId={profile.id} {session} />
     </div>
   </div>
 </section>
@@ -469,9 +473,18 @@
   .terminal-pane {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
+    height: 100%;
     min-height: 0;
     min-width: 0;
     padding: 8px 8px 8px;
+  }
+
+  .term-and-diagnostics {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    min-width: 0;
   }
 
   .toolbar {
@@ -491,6 +504,7 @@
 
   .term-pool {
     position: relative;
+    flex: 1 1 0;
     min-height: 0;
     min-width: 0;
     background: var(--terminal-bg);
