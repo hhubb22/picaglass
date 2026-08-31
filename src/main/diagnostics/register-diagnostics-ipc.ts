@@ -2,6 +2,7 @@ import { ipcMain } from 'electron'
 import type { DiagnosticsApi } from './create-diagnostics-api'
 import type { DeviceFactsRun } from '../../shared/picos/device-facts'
 import type { InterfaceStatusRun } from '../../shared/picos/interface-status'
+import type { L2Run } from '../../shared/picos/l2'
 
 function noSession(): DeviceFactsRun {
   return { kind: 'no-session' }
@@ -41,4 +42,10 @@ export function registerDiagnosticsIpc(api: DiagnosticsApi): void {
       return api.runInterfaceStatus(profileId, names)
     }
   )
+  ipcMain.handle('diagnostics:runL2', (_event, profileId: unknown): Promise<L2Run> | L2Run => {
+    if (typeof profileId !== 'string' || profileId.trim().length === 0) {
+      return { kind: 'no-session' }
+    }
+    return api.runL2(profileId)
+  })
 }

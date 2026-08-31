@@ -25,6 +25,7 @@ import type {
   InterfaceStatusChannelFailure,
   InterfaceStatusRun
 } from '../../shared/picos/interface-status'
+import type { L2ChannelFailure, L2Run } from '../../shared/picos/l2'
 
 export type McpProfileListing = {
   id: string
@@ -40,6 +41,7 @@ export type CreateMcpServerDeps = {
     profileId: string,
     interfaces?: readonly string[]
   ) => Promise<InterfaceStatusRun>
+  runL2: (profileId: string) => Promise<L2Run>
   now?: () => Date
   createToken?: () => string
 }
@@ -192,7 +194,9 @@ function projectResult<T>(result: ParsedResult<T>, includeRaw: boolean): unknown
   return { status: 'parsed', data: result.data }
 }
 
-function channelErrorText(run: DeviceFactsChannelFailure | InterfaceStatusChannelFailure): string {
+function channelErrorText(
+  run: DeviceFactsChannelFailure | InterfaceStatusChannelFailure | L2ChannelFailure
+): string {
   let message = 'Command failed.'
   if (run.reason === 'timeout') {
     message = 'Command timed out.'
@@ -356,6 +360,47 @@ function registerTools(server: McpServer, deps: CreateMcpServerDeps): void {
         payload.details = projectResult(run.block.details, withRaw)
       }
       return mcpText(payload)
+    }
+  )
+
+  server.registerTool(
+    'picos_get_l2_tables',
+    {
+      title: 'Get L2 tables',
+      description:
+        'Get the L2 Diagnostic Block for a Connection Profile that has an active SSH Session: VLAN table, FDB (mac-address table), and per-port tagged/untagged/native VLAN members. An empty FDB is a successful zero-row result.',
+      inputSchema: {
+        profile: z.string().min(1).describe('Connection Profile id or Profile Label'),
+        includeRaw: z
+          .boolean()
+          .optional()
+          .describe('When true, include raw command text for parsed results')
+      },
+      annotations: READ_ONLY
+    },
+    async ({ profile, includeRaw }) => {
+      const profiles = await deps.listProfiles()
+      const resolved = resolveProfile(profiles, profile)
+      if (!resolved.ok) {
+        return mcpToolError(resolved.message)
+      }
+      if (!deps.hasLiveSession(resolved.profile.id)) {
+        return noSessionError(resolved.profile.label)
+      }
+      const run = await deps.runL2(resolved.profile.id)
+      if (run.kind === 'no-session') {
+        return noSessionError(resolved.profile.label)
+      }
+      if (run.kind === 'channel-failed') {
+        return mcpToolError(channelErrorText(run))
+      }
+      const withRaw = includeRaw === true
+      return mcpText({
+        profile: { id: resolved.profile.id, label: resolved.profile.label },
+        vlans: projectResult(run.block.vlans, withRaw),
+        fdb: projectResult(run.block.fdb, withRaw),
+        switching: projectResult(run.block.switching, withRaw)
+      })
     }
   )
 }

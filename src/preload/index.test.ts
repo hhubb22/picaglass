@@ -62,7 +62,11 @@ describe('preload bridge', () => {
     if (typeof diagnostics !== 'object' || diagnostics === null) {
       throw new Error('expected a diagnostics object')
     }
-    expect(Object.keys(diagnostics).sort()).toEqual(['runDeviceFacts', 'runInterfaceStatus'])
+    expect(Object.keys(diagnostics).sort()).toEqual([
+      'runDeviceFacts',
+      'runInterfaceStatus',
+      'runL2'
+    ])
     const mcp = (api as { mcp: unknown }).mcp
     if (typeof mcp !== 'object' || mcp === null) {
       throw new Error('expected an mcp object')

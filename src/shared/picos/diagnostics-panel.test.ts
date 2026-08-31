@@ -5,10 +5,12 @@ import {
   deviceFactsPanelView,
   diagnosticBlockTabs,
   interfaceStatusPanelView,
+  l2PanelView,
   needSessionMessage
 } from './diagnostics-panel'
 import type { DeviceFactsRun } from './device-facts'
 import type { InterfaceStatusRun } from './interface-status'
+import type { L2Run } from './l2'
 
 const parsedRun: DeviceFactsRun = {
   kind: 'ok',
@@ -239,6 +241,87 @@ describe('interfaceStatusPanelView', () => {
     expect(view.optics).toEqual([])
     expect(view.emptyOpticsNotice).toBe('No optics rows.')
     expect(view.detailsRequested).toBe(false)
+    expect(view.viewRawLabel).toBe(VIEW_RAW_LABEL)
+  })
+})
+
+describe('l2PanelView', () => {
+  it('shows 请先连接 when there is no active SSH Session', () => {
+    expect(l2PanelView({ kind: 'no-session' })).toEqual({
+      status: 'need-session',
+      message: needSessionMessage()
+    })
+  })
+
+  it('presents a nonzero-exit channel failure without a parse-failed notice', () => {
+    expect(
+      l2PanelView({
+        kind: 'channel-failed',
+        reason: 'nonzero-exit',
+        exitCode: 1,
+        stderrHead: "syntax error, expecting 'table'"
+      })
+    ).toEqual({
+      status: 'channel-failed',
+      message: 'Command failed (exit 1)',
+      exitCode: 1,
+      stderrHead: "syntax error, expecting 'table'"
+    })
+  })
+
+  it('projects parsed VLANs and an empty FDB as ready data', () => {
+    const run: L2Run = {
+      kind: 'ok',
+      raw: 'combined-raw',
+      block: {
+        vlans: {
+          status: 'parsed',
+          data: {
+            rows: [{ id: '15', name: 'default', untagged: [], tagged: ['ae3'] }],
+            unparsedLines: 0
+          },
+          raw: 'vlan-raw'
+        },
+        fdb: {
+          status: 'parsed',
+          data: {
+            totalEntries: '0',
+            staticEntries: '0',
+            dynamicEntries: '0',
+            rows: [],
+            unparsedLines: 0
+          },
+          raw: 'fdb-raw'
+        },
+        switching: {
+          status: 'parsed',
+          data: {
+            rows: [
+              {
+                name: 'ge-1/1/1',
+                state: 'down',
+                tagging: 'untagged',
+                nativeVlan: '1',
+                vlanMembers: []
+              }
+            ],
+            unparsedLines: 0
+          },
+          raw: 'sw-raw'
+        }
+      }
+    }
+    const view = l2PanelView(run)
+    expect(view.status).toBe('ready')
+    if (view.status !== 'ready') {
+      return
+    }
+    expect(view.parseFailed).toBe(false)
+    expect(view.vlans).toEqual([{ id: '15', name: 'default', untagged: [], tagged: ['ae3'] }])
+    expect(view.fdb).toEqual([])
+    expect(view.emptyFdbNotice).toBe('No FDB rows.')
+    expect(view.fdbTotalEntries).toBe('0')
+    expect(view.switching).toHaveLength(1)
     expect(view.viewRawLabel).toBe(VIEW_RAW_LABEL)
   })
 })

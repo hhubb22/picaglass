@@ -135,7 +135,8 @@ app.whenReady().then(async () => {
       hasLiveSession: (profileId) => sshApi.hasLiveSession(profileId),
       runDeviceFacts: (profileId) => diagnosticsApi.runDeviceFacts(profileId),
       runInterfaceStatus: (profileId, interfaces) =>
-        diagnosticsApi.runInterfaceStatus(profileId, interfaces)
+        diagnosticsApi.runInterfaceStatus(profileId, interfaces),
+      runL2: (profileId) => diagnosticsApi.runL2(profileId)
     })
   } catch (err) {
     console.error('Failed to start the Agent Interface', err)
