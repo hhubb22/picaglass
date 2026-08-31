@@ -18,6 +18,7 @@ import {
   markAttemptFailureViewed,
   SESSION_STATE_LABEL,
   sessionIndicator,
+  workspaceLiveAnnouncement,
   submitSecret,
   windowCloseConfirmation,
   withAttemptFailure,
@@ -458,5 +459,43 @@ describe('session control confirmations', () => {
 
   it('does not prompt when closing a clean workspace with no sessions', () => {
     expect(windowCloseConfirmation({ unsaved: null, activeCount: 0 })).toBe(null)
+  })
+})
+
+describe('workspaceLiveAnnouncement', () => {
+  it('announces a session state change with icon-accompanying text', () => {
+    expect(
+      workspaceLiveAnnouncement({
+        label: 'prod db',
+        previousState: 'connecting',
+        nextState: 'connected',
+        becameUnseenFailure: false,
+        failureOutcome: null
+      })
+    ).toBe('prod db: Connected')
+  })
+
+  it('announces an off-screen failure by its stable outcome', () => {
+    expect(
+      workspaceLiveAnnouncement({
+        label: 'prod db',
+        previousState: 'connecting',
+        nextState: 'no-active-session',
+        becameUnseenFailure: true,
+        failureOutcome: 'authentication-failed'
+      })
+    ).toBe('prod db: Authentication failed')
+  })
+
+  it('stays silent when state is unchanged and no new failure appears', () => {
+    expect(
+      workspaceLiveAnnouncement({
+        label: 'prod db',
+        previousState: 'connected',
+        nextState: 'connected',
+        becameUnseenFailure: false,
+        failureOutcome: null
+      })
+    ).toBe(null)
   })
 })

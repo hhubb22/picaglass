@@ -69,6 +69,7 @@ describe('preload bridge', () => {
       'pickPrivateKey',
       'replacePrivateKey',
       'select',
+      'setSidebarCollapsed',
       'update'
     ])
     const workspace = (api as { workspace: unknown }).workspace

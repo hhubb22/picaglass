@@ -2,6 +2,7 @@ import type { SshConnectResult, SshStatusEvent } from './ssh'
 import type { PendingHostKey } from './host-trust-ui'
 import {
   applyAttemptFailure,
+  ATTEMPT_OUTCOME_LABEL,
   dismissAttemptFailure,
   isFailedAttemptOutcome,
   viewAttemptFailure,
@@ -36,6 +37,25 @@ export function sessionIndicator(state: VisibleSessionState): SessionIndicator {
     return 'live'
   }
   return 'ending'
+}
+
+export function workspaceLiveAnnouncement(input: {
+  label: string
+  previousState: VisibleSessionState
+  nextState: VisibleSessionState
+  becameUnseenFailure: boolean
+  failureOutcome: ConnectionAttemptOutcome | null
+}): string | null {
+  if (input.label.length === 0) {
+    return null
+  }
+  if (input.becameUnseenFailure && input.failureOutcome !== null) {
+    return `${input.label}: ${ATTEMPT_OUTCOME_LABEL[input.failureOutcome]}`
+  }
+  if (input.previousState === input.nextState) {
+    return null
+  }
+  return `${input.label}: ${SESSION_STATE_LABEL[input.nextState]}`
 }
 
 export type SecretKind = 'password' | 'passphrase'

@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte'
   import {
+    adjacentProfileId,
     deleteProfileConfirmation,
     draftFromProfile,
+    filterProfiles,
     isProfileDraftDirty,
     isProfileEditDirty,
     parseProfileDraft,
@@ -40,6 +42,7 @@
     submitSecret,
     windowCloseConfirmation,
     withAttemptFailure,
+    workspaceLiveAnnouncement,
     type ProfileSessionUi,
     type SessionConfirmation
   } from '../../shared/ssh-session-ui'
@@ -62,6 +65,11 @@
     formatSeparatorText,
     type TranscriptEntry
   } from '../../shared/terminal-transcript'
+  import {
+    matchWorkspaceShortcut,
+    shortcutPlatformFrom,
+    type ShortcutEvent
+  } from '../../shared/workspace-shortcuts'
   import AppDialog from './AppDialog.svelte'
   import ProfileCreateForm from './ProfileCreateForm.svelte'
   import ProfileSidebar from './ProfileSidebar.svelte'
@@ -73,6 +81,7 @@
   let workspace = $state<ProfileWorkspace>({
     profiles: [],
     selectedProfileId: null,
+    sidebarCollapsed: false,
     notice: null
   })
   let pane = $state<WorkspacePane>('empty')
@@ -97,6 +106,9 @@
   let hostTrust = $state<HostTrustState>({ status: 'not-remembered' })
   let replaceConfirm = $state(false)
   let forgetConfirm = $state(false)
+  let searchQuery = $state('')
+  let liveAnnouncement = $state('')
+  let sidebar = $state<{ focusSearch: () => void } | null>(null)
 
   const selected = $derived(
     workspace.profiles.find((profile) => profile.id === workspace.selectedProfileId) ?? null
@@ -118,6 +130,7 @@
     selected === null ? defaultTab() : (tabs[selected.id] ?? defaultTab())
   )
   const selectedTranscript = $derived(selected === null ? [] : (transcripts[selected.id] ?? []))
+  const visibleProfiles = $derived(filterProfiles(workspace.profiles, searchQuery))
 
   const registry = createTerminalRegistry({
     onInput(profileId, data) {
@@ -189,7 +202,19 @@
   }
 
   function setSession(profileId: string, next: ProfileSessionUi): void {
+    const previous = sessionOf(profileId)
     sessions[profileId] = next
+    const label = workspace.profiles.find((profile) => profile.id === profileId)?.label ?? ''
+    const text = workspaceLiveAnnouncement({
+      label,
+      previousState: previous.state,
+      nextState: next.state,
+      becameUnseenFailure: next.unseenFailure && !previous.unseenFailure,
+      failureOutcome: next.lastOutcome
+    })
+    if (text !== null) {
+      liveAnnouncement = text
+    }
   }
 
   function isOnScreen(profileId: string): boolean {
@@ -762,6 +787,91 @@
     void window.api.workspace.confirmClose()
   }
 
+  function dialogIsOpen(): boolean {
+    return (
+      duplicateLabel !== null ||
+      discard !== null ||
+      deleteConfirm !== null ||
+      disconnectConfirm !== null ||
+      disconnectAllPrompt !== null ||
+      closePrompt !== null ||
+      forgetConfirm ||
+      replaceConfirm ||
+      (selected !== null && selectedSession.secretPrompt !== null) ||
+      (selected !== null && selectedSession.pendingHostKey !== null) ||
+      (selected !== null && selectedSession.missingPrivateKey)
+    )
+  }
+
+  async function toggleSidebar(): Promise<void> {
+    const result = await window.api.profiles.setSidebarCollapsed(!workspace.sidebarCollapsed)
+    workspace = result.workspace
+  }
+
+  async function revealAndFocusSearch(): Promise<void> {
+    if (workspace.sidebarCollapsed) {
+      const result = await window.api.profiles.setSidebarCollapsed(false)
+      workspace = result.workspace
+      await tick()
+    }
+    sidebar?.focusSearch()
+  }
+
+  function onWorkspaceKeydown(event: KeyboardEvent): void {
+    if (dialogIsOpen()) {
+      return
+    }
+    const shortcutEvent: ShortcutEvent = {
+      code: event.code,
+      metaKey: event.metaKey,
+      ctrlKey: event.ctrlKey,
+      shiftKey: event.shiftKey,
+      altKey: event.altKey,
+      isComposing: event.isComposing
+    }
+    const action = matchWorkspaceShortcut(shortcutEvent, shortcutPlatformFrom(navigator.platform))
+    if (action === null) {
+      return
+    }
+    if (action === 'search') {
+      event.preventDefault()
+      event.stopPropagation()
+      void revealAndFocusSearch()
+      return
+    }
+    if (action === 'toggle-sidebar') {
+      event.preventDefault()
+      event.stopPropagation()
+      void toggleSidebar()
+      return
+    }
+    if (action === 'overview' && pane === 'profile') {
+      event.preventDefault()
+      event.stopPropagation()
+      chooseTab('overview')
+      return
+    }
+    if (action === 'terminal' && pane === 'profile') {
+      event.preventDefault()
+      event.stopPropagation()
+      chooseTab('terminal')
+      return
+    }
+    if (action === 'previous-profile' || action === 'next-profile') {
+      const nextId = adjacentProfileId(
+        visibleProfiles,
+        workspace.selectedProfileId,
+        action === 'previous-profile' ? 'previous' : 'next'
+      )
+      if (nextId === null) {
+        return
+      }
+      event.preventDefault()
+      event.stopPropagation()
+      void selectProfile(nextId)
+    }
+  }
+
   onMount(() => {
     void window.api.profiles.load().then(async (loaded) => {
       workspace = loaded
@@ -830,28 +940,35 @@
       }
       closePrompt = confirmation
     })
+    window.addEventListener('keydown', onWorkspaceKeydown, true)
     return () => {
       stopData()
       stopStatus()
       stopSnapshot()
       stopClose()
+      window.removeEventListener('keydown', onWorkspaceKeydown, true)
       registry.dispose()
     }
   })
 </script>
 
-<div class="app">
+<div class="app" class:collapsed={workspace.sidebarCollapsed}>
   <ProfileSidebar
-    profiles={workspace.profiles}
+    bind:this={sidebar}
+    profiles={visibleProfiles}
     selectedProfileId={workspace.selectedProfileId}
     creating={pane === 'create'}
     {sessions}
+    collapsed={workspace.sidebarCollapsed}
+    bind:searchQuery
     onCreate={beginCreate}
     onSelect={(profileId) => void selectProfile(profileId)}
     onDisconnectAll={requestDisconnectAll}
+    onToggleCollapsed={() => void toggleSidebar()}
   />
 
   <main>
+    <p class="visually-hidden" aria-live="polite" aria-atomic="true">{liveAnnouncement}</p>
     {#if workspace.notice?.kind === 'recovered-from-backup'}
       <p class="notice" role="status">
         The profile store was unreadable and was restored from the last-valid backup. Recent changes
@@ -1117,6 +1234,13 @@
     grid-template-columns: 18rem minmax(0, 1fr);
     height: 100%;
     min-height: 0;
+    background: var(--bg);
+    color: var(--fg);
+    transition: grid-template-columns var(--motion);
+  }
+
+  .app.collapsed {
+    grid-template-columns: auto minmax(0, 1fr);
   }
 
   main {
@@ -1150,9 +1274,9 @@
   }
 
   .notice {
-    border: 1px solid #111;
+    border: 1px solid var(--fg);
     padding: 10px 12px;
-    background: #f3f3f3;
+    background: var(--hover);
     margin: 16px 24px 0;
   }
 
@@ -1160,6 +1284,10 @@
     font: inherit;
     padding: 8px 10px;
     justify-self: start;
+    color: inherit;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    cursor: pointer;
   }
 
   .fingerprint {

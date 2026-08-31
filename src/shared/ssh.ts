@@ -7,6 +7,7 @@ import type {
   ProfileWorkspace,
   ReplacePrivateKeyResult,
   SelectProfileResult,
+  SetSidebarCollapsedResult,
   UpdateProfileInput,
   UpdateProfileResult
 } from './profile'
@@ -113,6 +114,7 @@ export type RendererApi = {
     delete: (profileId: string) => Promise<DeleteProfileResult>
     pickPrivateKey: () => Promise<ProfileKeyPick | null>
     replacePrivateKey: (profileId: string) => Promise<ReplacePrivateKeyResult>
+    setSidebarCollapsed: (collapsed: boolean) => Promise<SetSidebarCollapsedResult>
   }
   workspace: {
     onCloseRequested: (handler: (info: { activeCount: number }) => void) => () => void
