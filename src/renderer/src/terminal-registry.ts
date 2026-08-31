@@ -21,6 +21,7 @@ export type TerminalRegistry = {
   focus: (profileId: string) => void
   fit: (profileId: string) => void
   size: (profileId: string) => { cols: number; rows: number } | undefined
+  forget: (profileId: string) => void
   dispose: () => void
 }
 
@@ -172,6 +173,19 @@ export function createTerminalRegistry(handlers: {
         return undefined
       }
       return sizeOf(inst)
+    },
+
+    forget(profileId) {
+      const inst = instances.get(profileId)
+      if (inst === undefined) {
+        return
+      }
+      inst.observer.disconnect()
+      for (const decoration of inst.decorations) {
+        decoration.dispose()
+      }
+      inst.term.dispose()
+      instances.delete(profileId)
     },
 
     dispose() {

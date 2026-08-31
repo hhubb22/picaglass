@@ -4,7 +4,8 @@ import type {
   CreateProfileResult,
   ProfileAuthDraft,
   ProfileFieldErrors,
-  ProfileWorkspace
+  ProfileWorkspace,
+  UpdateProfileInput
 } from '../../shared/profile'
 import type { ProfileApi } from './create-profile-api'
 
@@ -18,6 +19,9 @@ function parseAuth(value: unknown): ProfileAuthDraft | undefined {
   }
   if (value.method === 'password') {
     return { method: 'password' }
+  }
+  if (value.method === 'privateKey' && value.keepExisting === true) {
+    return { method: 'privateKey', keepExisting: true }
   }
   if (value.method === 'privateKey' && typeof value.keyRef === 'string') {
     return { method: 'privateKey', keyRef: value.keyRef }
@@ -56,6 +60,17 @@ function parseCreateInput(value: unknown): CreateProfileInput | undefined {
   return input
 }
 
+function parseUpdateInput(value: unknown): UpdateProfileInput | undefined {
+  if (!isRecord(value) || typeof value.profileId !== 'string') {
+    return undefined
+  }
+  const draft = parseCreateInput(value)
+  if (draft === undefined) {
+    return undefined
+  }
+  return { ...draft, profileId: value.profileId }
+}
+
 function invalidCreate(workspace: ProfileWorkspace): Extract<CreateProfileResult, { ok: false }> {
   const fields: ProfileFieldErrors = { host: 'Enter a host' }
   return { ok: false, reason: 'invalid', fields, workspace }
@@ -70,6 +85,17 @@ export function registerProfileIpc(api: ProfileApi): void {
     }
     return api.create(parsed)
   })
+  ipcMain.handle('profiles:update', (_event, input: unknown) => {
+    const parsed = parseUpdateInput(input)
+    if (parsed === undefined) {
+      return api.load().then((workspace) => ({
+        ok: false as const,
+        reason: 'unknown-profile' as const,
+        workspace
+      }))
+    }
+    return api.update(parsed)
+  })
   ipcMain.handle('profiles:select', (_event, profileId: unknown) => {
     if (typeof profileId !== 'string') {
       return api.load().then((workspace) => ({
@@ -80,5 +106,25 @@ export function registerProfileIpc(api: ProfileApi): void {
     }
     return api.select(profileId)
   })
+  ipcMain.handle('profiles:delete', (_event, profileId: unknown) => {
+    if (typeof profileId !== 'string') {
+      return api.load().then((workspace) => ({
+        ok: false as const,
+        reason: 'unknown-profile' as const,
+        workspace
+      }))
+    }
+    return api.delete(profileId)
+  })
   ipcMain.handle('profiles:pickPrivateKey', () => api.pickPrivateKey())
+  ipcMain.handle('profiles:replacePrivateKey', (_event, profileId: unknown) => {
+    if (typeof profileId !== 'string') {
+      return api.load().then((workspace) => ({
+        ok: false as const,
+        reason: 'unknown-profile' as const,
+        workspace
+      }))
+    }
+    return api.replacePrivateKey(profileId)
+  })
 }

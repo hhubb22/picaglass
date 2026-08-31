@@ -1,9 +1,13 @@
 import type {
   CreateProfileInput,
   CreateProfileResult,
+  DeleteProfileResult,
   ProfileKeyPick,
   ProfileWorkspace,
-  SelectProfileResult
+  ReplacePrivateKeyResult,
+  SelectProfileResult,
+  UpdateProfileInput,
+  UpdateProfileResult
 } from './profile'
 
 export type SshAuth =
@@ -76,8 +80,11 @@ export type RendererApi = {
   profiles: {
     load: () => Promise<ProfileWorkspace>
     create: (input: CreateProfileInput) => Promise<CreateProfileResult>
+    update: (input: UpdateProfileInput) => Promise<UpdateProfileResult>
     select: (profileId: string) => Promise<SelectProfileResult>
+    delete: (profileId: string) => Promise<DeleteProfileResult>
     pickPrivateKey: () => Promise<ProfileKeyPick | null>
+    replacePrivateKey: (profileId: string) => Promise<ReplacePrivateKeyResult>
   }
   workspace: {
     onCloseRequested: (handler: () => void) => () => void
