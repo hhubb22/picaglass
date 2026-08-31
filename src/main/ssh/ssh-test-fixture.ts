@@ -350,6 +350,9 @@ function statusEvent(payload: unknown): SshStatusEvent | undefined {
     return undefined
   }
   const event: SshStatusEvent = { sessionId: payload.sessionId, type: payload.type }
+  if (typeof payload.profileId === 'string') {
+    event.profileId = payload.profileId
+  }
   if (typeof payload.message === 'string') {
     event.message = payload.message
   }

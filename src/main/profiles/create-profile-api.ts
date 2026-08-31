@@ -32,11 +32,20 @@ export type CreateProfileApiDeps = {
   dialogs?: ProfileDialogs
 }
 
+export type ProfileConnectTarget = {
+  id: string
+  host: string
+  port: number
+  username: string
+  auth: StoredAuth
+}
+
 export type ProfileApi = {
   load: () => Promise<ProfileWorkspace>
   create: (input: CreateProfileInput) => Promise<CreateProfileResult>
   select: (profileId: string) => Promise<SelectProfileResult>
   pickPrivateKey: () => Promise<ProfileKeyPick | null>
+  getConnectTarget: (profileId: string) => Promise<ProfileConnectTarget | undefined>
 }
 
 const SCHEMA_VERSION = 1
@@ -419,6 +428,21 @@ export function createProfileApi(deps: CreateProfileApiDeps): ProfileApi {
         return { ok: false, reason: 'write-failed', workspace: workspace() }
       }
       return { ok: true, workspace: workspace() }
+    },
+
+    async getConnectTarget(profileId) {
+      await ensureLoaded()
+      const profile = (document ?? emptyDocument()).profiles.find((entry) => entry.id === profileId)
+      if (profile === undefined) {
+        return undefined
+      }
+      return {
+        id: profile.id,
+        host: profile.host,
+        port: profile.port,
+        username: profile.username,
+        auth: { ...profile.auth }
+      }
     },
 
     async pickPrivateKey() {

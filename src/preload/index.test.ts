@@ -50,6 +50,7 @@ describe('preload bridge', () => {
       'onStatus',
       'pickPrivateKey',
       'resize',
+      'secretRequirement',
       'write'
     ])
     const profiles = (api as { profiles: unknown }).profiles
@@ -66,5 +67,28 @@ describe('preload bridge', () => {
       'onCloseRequested',
       'setCloseGuard'
     ])
+  })
+
+  it('drops ssh data that has no Connection Profile identity', async () => {
+    const { ipcRenderer } = await import('electron')
+    vi.mocked(ipcRenderer.on).mockClear()
+    const bridges = await loadPreload()
+    const api = bridges[0]?.value as {
+      ssh: { onData: (handler: (id: string, chunk: Uint8Array, profileId: string) => void) => void }
+    }
+    const received: Array<{ sessionId: string; profileId: string }> = []
+    api.ssh.onData((sessionId, _chunk, profileId) => {
+      received.push({ sessionId, profileId })
+    })
+    const listener = vi
+      .mocked(ipcRenderer.on)
+      .mock.calls.find((call) => call[0] === 'ssh:data')?.[1]
+    if (typeof listener !== 'function') {
+      throw new Error('expected an ssh:data listener')
+    }
+    const deliver = listener as (event: unknown, payload: unknown) => void
+    deliver({}, { sessionId: 's1', chunk: Uint8Array.from([1]) })
+    deliver({}, { sessionId: 's1', profileId: 'p1', chunk: Uint8Array.from([1]) })
+    expect(received).toEqual([{ sessionId: 's1', profileId: 'p1' }])
   })
 })

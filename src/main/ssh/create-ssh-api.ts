@@ -8,7 +8,9 @@ import type {
   SshConnectRequest,
   SshConnectResult,
   SshHostKeyAction,
-  SshKeyPick
+  SshKeyPick,
+  SshProfileConnectRequest,
+  SshSecretRequirement
 } from '../../shared/ssh'
 
 export type SshSender = { id: number }
@@ -31,16 +33,30 @@ export type SshDialogs = {
   }>
 }
 
+export type ResolvedProfile = {
+  id: string
+  host: string
+  port: number
+  username: string
+  auth: { method: 'password' } | { method: 'privateKey'; filePath: string }
+}
+
 export type CreateSshApiDeps = {
   userDataPath: string
   dialogs: SshDialogs
   emitTo: (senderId: number, channel: string, payload: unknown) => void
   authTimeoutMs?: number
+  resolveProfile?: (profileId: string) => Promise<ResolvedProfile | undefined>
 }
 
 export type SshApi = {
   pickPrivateKey: (sender: SshSender) => Promise<SshKeyPick | null>
+  secretRequirement: (profileId: string) => Promise<SshSecretRequirement>
   connect: (req: SshConnectRequest, sender: SshSender) => Promise<SshConnectResult>
+  connectFromProfile: (
+    req: SshProfileConnectRequest,
+    sender: SshSender
+  ) => Promise<SshConnectResult>
   confirmHostKey: (
     sessionId: string,
     action: SshHostKeyAction,
@@ -227,6 +243,14 @@ function privateKeyError(privateKey: Buffer, passphrase: string | undefined): st
   return undefined
 }
 
+function isMissingPassphrase(message: string): boolean {
+  return message.includes('Encrypted') && message.includes('no passphrase given')
+}
+
+function isBadPassphrase(message: string): boolean {
+  return message.toLowerCase().includes('bad passphrase')
+}
+
 function parseConnect(req: SshConnectRequest): ParsedConnect {
   const profileId = req.profileId.trim()
   if (profileId.length === 0) {
@@ -331,12 +355,17 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
     if (outcome.type === 'error') {
       deps.emitTo(session.senderId, 'ssh:status', {
         sessionId,
+        profileId: session.profileId,
         type: 'error',
         message: outcome.message
       })
       return
     }
-    deps.emitTo(session.senderId, 'ssh:status', { sessionId, type: 'closed' })
+    deps.emitTo(session.senderId, 'ssh:status', {
+      sessionId,
+      profileId: session.profileId,
+      type: 'closed'
+    })
   }
 
   function openShell(sessionId: string): Promise<SshConnectResult> {
@@ -382,6 +411,7 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
                 }
                 deps.emitTo(session.senderId, 'ssh:data', {
                   sessionId,
+                  profileId: session.profileId,
                   chunk: Uint8Array.from(data)
                 })
               })
@@ -391,6 +421,7 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
               })
               deps.emitTo(session.senderId, 'ssh:status', {
                 sessionId,
+                profileId: session.profileId,
                 type: 'connected'
               })
               finish({ ok: true, sessionId })
@@ -406,7 +437,7 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
     })
   }
 
-  return {
+  const api: SshApi = {
     async pickPrivateKey(sender) {
       const result = await deps.dialogs.showOpenDialog({
         title: '选择私钥',
@@ -420,6 +451,94 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
       const keyRef = randomUUID()
       keyFiles.set(keyRef, { senderId: sender.id, filePath })
       return { keyRef, label: basename(filePath) }
+    },
+
+    async secretRequirement(profileId) {
+      const id = profileId.trim()
+      if (id.length === 0 || deps.resolveProfile === undefined) {
+        return { ok: false, reason: 'unknown-profile' }
+      }
+      const profile = await deps.resolveProfile(id)
+      if (profile === undefined) {
+        return { ok: false, reason: 'unknown-profile' }
+      }
+      if (profile.auth.method === 'password') {
+        return { ok: true, kind: 'password' }
+      }
+      try {
+        const privateKey = readFileSync(profile.auth.filePath)
+        const keyError = privateKeyError(privateKey, undefined)
+        if (keyError !== undefined && isMissingPassphrase(keyError)) {
+          return { ok: true, kind: 'passphrase' }
+        }
+        if (keyError !== undefined) {
+          return { ok: false, reason: 'cannot-read-key' }
+        }
+        return { ok: true, kind: 'none' }
+      } catch {
+        return { ok: false, reason: 'cannot-read-key' }
+      }
+    },
+
+    async connectFromProfile(req, sender) {
+      const profileId = req.profileId.trim()
+      if (profileId.length === 0) {
+        return invalid('invalid profile')
+      }
+      const resolver = deps.resolveProfile
+      if (resolver === undefined) {
+        return invalid('unknown profile')
+      }
+      const profile = await resolver(profileId)
+      if (profile === undefined) {
+        return invalid('unknown profile')
+      }
+      if (profile.auth.method === 'password') {
+        if (req.secret === undefined || req.secret.length === 0) {
+          return { ok: false, reason: 'secret-required', kind: 'password' }
+        }
+        return api.connect(
+          {
+            profileId: profile.id,
+            host: profile.host,
+            port: profile.port,
+            username: profile.username,
+            auth: { method: 'password', password: req.secret },
+            cols: req.cols,
+            rows: req.rows
+          },
+          sender
+        )
+      }
+      const keyRef = randomUUID()
+      keyFiles.set(keyRef, { senderId: sender.id, filePath: profile.auth.filePath })
+      const auth =
+        req.secret !== undefined && req.secret.length > 0
+          ? { method: 'privateKey' as const, keyRef, passphrase: req.secret }
+          : { method: 'privateKey' as const, keyRef }
+      try {
+        const result = await api.connect(
+          {
+            profileId: profile.id,
+            host: profile.host,
+            port: profile.port,
+            username: profile.username,
+            auth,
+            cols: req.cols,
+            rows: req.rows
+          },
+          sender
+        )
+        if (!result.ok && result.reason === 'invalid' && isMissingPassphrase(result.message)) {
+          return { ok: false, reason: 'secret-required', kind: 'passphrase' }
+        }
+        if (!result.ok && result.reason === 'invalid' && isBadPassphrase(result.message)) {
+          return { ok: false, reason: 'auth-failed', message: result.message }
+        }
+        return result
+      } finally {
+        keyFiles.delete(keyRef)
+      }
     },
 
     connect(req, sender) {
@@ -735,4 +854,5 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
       keyFiles.clear()
     }
   }
+  return api
 }
