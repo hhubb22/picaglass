@@ -10,6 +10,11 @@ import type { InterfaceStatusRun } from '../../shared/picos/interface-status'
 import type { L2Run } from '../../shared/picos/l2'
 import type { L3Run } from '../../shared/picos/l3'
 import type { LogsRun } from '../../shared/picos/logs'
+import {
+  idleTechSupportSnapshot,
+  type TechSupportSnapshot,
+  type TechSupportStartResult
+} from '../../shared/picos/tech-support'
 import { createMcpServer, type McpServerHandle } from './create-mcp-server'
 
 type OkDeviceFactsRun = Extract<DeviceFactsRun, { kind: 'ok' }>
@@ -362,6 +367,8 @@ describe('embedded MCP server', () => {
     runL2?: (profileId: string) => Promise<L2Run>
     runL3?: (profileId: string) => Promise<L3Run>
     runLogs?: (profileId: string, lines?: number) => Promise<LogsRun>
+    startTechSupport?: (profileId: string) => Promise<TechSupportStartResult>
+    getTechSupport?: (profileId: string) => TechSupportSnapshot
     createToken?: () => string
     now?: () => Date
   }): Promise<{ dir: string; handle: McpServerHandle }> {
@@ -376,6 +383,8 @@ describe('embedded MCP server', () => {
       runL2: async () => ({ kind: 'no-session' }),
       runL3: async () => ({ kind: 'no-session' }),
       runLogs: async () => ({ kind: 'no-session' }),
+      startTechSupport: async () => ({ kind: 'no-session' }),
+      getTechSupport: (profileId) => idleTechSupportSnapshot(profileId),
       createToken: () => TOKEN,
       now: () => new Date(STARTED_AT),
       ...overrides
@@ -1072,5 +1081,221 @@ describe('embedded MCP server', () => {
         raw: 'not syslog'
       }
     })
+  })
+
+  it('starts tech_support and returns a handle without waiting for completion', async () => {
+    const started: string[] = []
+    const collecting: TechSupportSnapshot = {
+      ...idleTechSupportSnapshot('p-lab'),
+      taskId: 'task-1',
+      phase: 'collecting',
+      lastRemotePath: '/tmp/PICOS-202608310901-techSupport.log',
+      lastRemoteBytes: 1024,
+      lastProcessRunning: true,
+      progress: [
+        {
+          at: '2026-08-31T09:01:00.000Z',
+          phase: 'starting',
+          message: '已在设备侧后台启动采集（nohup 脱离会话）'
+        }
+      ]
+    }
+    const { handle } = await start({
+      listProfiles: async () => [{ id: 'p-lab', label: 'lab switch' }],
+      hasLiveSession: () => true,
+      startTechSupport: async (profileId) => {
+        started.push(profileId)
+        return { kind: 'ok', snapshot: collecting }
+      },
+      getTechSupport: () => idleTechSupportSnapshot('p-lab')
+    })
+    const sessionId = await openSession(handle)
+    const result = await callTool(handle, sessionId, 'picos_collect_tech_support', {
+      profile: 'p-lab'
+    })
+    expect(started).toEqual(['p-lab'])
+    expect(result.isError).toBe(false)
+    expect(result.json).toEqual({
+      profile: { id: 'p-lab', label: 'lab switch' },
+      handle: 'task-1',
+      phase: 'collecting',
+      progress: [
+        {
+          at: '2026-08-31T09:01:00.000Z',
+          phase: 'starting',
+          message: '已在设备侧后台启动采集（nohup 脱离会话）'
+        }
+      ],
+      artifact: null,
+      failure: null,
+      lastKnown: {
+        remotePath: '/tmp/PICOS-202608310901-techSupport.log',
+        remoteBytes: 1024,
+        processRunning: true
+      },
+      waitingForSession: false,
+      cleanupError: null
+    })
+  })
+
+  it('queries tech_support status by handle without starting again, including after session drop', async () => {
+    const started: string[] = []
+    const collecting: TechSupportSnapshot = {
+      ...idleTechSupportSnapshot('p-lab'),
+      taskId: 'task-1',
+      phase: 'collecting',
+      waitingForSession: true,
+      lastRemoteBytes: 1024,
+      lastProcessRunning: true,
+      progress: [
+        {
+          at: '2026-08-31T09:04:00.000Z',
+          phase: 'collecting',
+          message: '等待 SSH Session 以继续轮询'
+        }
+      ]
+    }
+    const { handle } = await start({
+      listProfiles: async () => [{ id: 'p-lab', label: 'lab switch' }],
+      hasLiveSession: () => false,
+      startTechSupport: async (profileId) => {
+        started.push(profileId)
+        return { kind: 'no-session' }
+      },
+      getTechSupport: () => collecting
+    })
+    const sessionId = await openSession(handle)
+    const byProfile = await callTool(handle, sessionId, 'picos_collect_tech_support', {
+      profile: 'p-lab'
+    })
+    const byHandle = await callTool(handle, sessionId, 'picos_collect_tech_support', {
+      profile: 'p-lab',
+      handle: 'task-1'
+    })
+    expect(started).toEqual([])
+    expect(byProfile.isError).toBe(false)
+    expect(byHandle.isError).toBe(false)
+    expect(byProfile.json).toMatchObject({
+      handle: 'task-1',
+      phase: 'collecting',
+      waitingForSession: true,
+      lastKnown: { remoteBytes: 1024, processRunning: true }
+    })
+    expect(byHandle.json).toEqual(byProfile.json)
+  })
+
+  it('returns a done artifact payload for a finished collection', async () => {
+    const done: TechSupportSnapshot = {
+      ...idleTechSupportSnapshot('p-lab'),
+      taskId: 'task-1',
+      phase: 'done',
+      artifact: {
+        fileName: 'PICOS-202608310901-techSupport.log',
+        byteSize: 2048,
+        localPath: '/tmp/PICOS-202608310901-techSupport.log',
+        remotePath: '/tmp/PICOS-202608310901-techSupport.log',
+        remoteDeleted: true
+      },
+      progress: [
+        {
+          at: '2026-08-31T09:08:00.000Z',
+          phase: 'done',
+          message: '已删除设备侧副本'
+        }
+      ]
+    }
+    const { handle } = await start({
+      listProfiles: async () => [{ id: 'p-lab', label: 'lab switch' }],
+      hasLiveSession: () => true,
+      startTechSupport: async () => ({ kind: 'ok', snapshot: done }),
+      getTechSupport: () => done
+    })
+    const sessionId = await openSession(handle)
+    const result = await callTool(handle, sessionId, 'picos_collect_tech_support', {
+      profile: 'p-lab'
+    })
+    expect(result.isError).toBe(false)
+    expect(result.json).toMatchObject({
+      handle: 'task-1',
+      phase: 'done',
+      artifact: {
+        fileName: 'PICOS-202608310901-techSupport.log',
+        byteSize: 2048,
+        localPath: '/tmp/PICOS-202608310901-techSupport.log',
+        remoteDeleted: true
+      },
+      failure: null
+    })
+  })
+
+  it('returns failed last-known facts as a normal payload', async () => {
+    const failed: TechSupportSnapshot = {
+      ...idleTechSupportSnapshot('p-lab'),
+      taskId: 'task-1',
+      phase: 'failed',
+      failure: {
+        stage: 'transferring',
+        message: '回传校验失败：设备侧 2048 字节，本机 1000 字节'
+      },
+      lastRemotePath: '/tmp/PICOS-202608310901-techSupport.log',
+      lastRemoteBytes: 2048,
+      lastProcessRunning: false
+    }
+    const { handle } = await start({
+      listProfiles: async () => [{ id: 'p-lab', label: 'lab switch' }],
+      hasLiveSession: () => true,
+      getTechSupport: () => failed
+    })
+    const sessionId = await openSession(handle)
+    const result = await callTool(handle, sessionId, 'picos_collect_tech_support', {
+      profile: 'p-lab'
+    })
+    expect(result.isError).toBe(false)
+    expect(result.json).toMatchObject({
+      phase: 'failed',
+      failure: {
+        stage: 'transferring',
+        message: '回传校验失败：设备侧 2048 字节，本机 1000 字节'
+      },
+      lastKnown: {
+        remotePath: '/tmp/PICOS-202608310901-techSupport.log',
+        remoteBytes: 2048,
+        processRunning: false
+      }
+    })
+  })
+
+  it('returns a protocol error when starting tech_support with no active SSH Session', async () => {
+    const started: string[] = []
+    const { handle } = await start({
+      listProfiles: async () => [{ id: 'p-lab', label: 'lab switch' }],
+      hasLiveSession: () => false,
+      startTechSupport: async (profileId) => {
+        started.push(profileId)
+        return { kind: 'no-session' }
+      }
+    })
+    const sessionId = await openSession(handle)
+    const result = await callTool(handle, sessionId, 'picos_collect_tech_support', {
+      profile: 'lab switch'
+    })
+    expect(result.isError).toBe(true)
+    expect(result.text).toBe('No active SSH Session for profile lab switch.')
+    expect(started).toEqual([])
+  })
+
+  it('rejects an unknown tech_support handle', async () => {
+    const { handle } = await start({
+      listProfiles: async () => [{ id: 'p-lab', label: 'lab switch' }],
+      hasLiveSession: () => true,
+      getTechSupport: () => idleTechSupportSnapshot('p-lab')
+    })
+    const sessionId = await openSession(handle)
+    const result = await callTool(handle, sessionId, 'picos_collect_tech_support', {
+      profile: 'p-lab',
+      handle: 'missing'
+    })
+    expect(result.isError).toBe(true)
+    expect(result.text).toBe('Unknown tech_support handle: missing')
   })
 })

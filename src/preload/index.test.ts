@@ -63,11 +63,15 @@ describe('preload bridge', () => {
       throw new Error('expected a diagnostics object')
     }
     expect(Object.keys(diagnostics).sort()).toEqual([
+      'deleteTechSupportRemote',
+      'getTechSupport',
+      'revealTechSupportArtifact',
       'runDeviceFacts',
       'runInterfaceStatus',
       'runL2',
       'runL3',
-      'runLogs'
+      'runLogs',
+      'startTechSupport'
     ])
     const mcp = (api as { mcp: unknown }).mcp
     if (typeof mcp !== 'object' || mcp === null) {

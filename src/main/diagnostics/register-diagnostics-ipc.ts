@@ -5,6 +5,13 @@ import type { InterfaceStatusRun } from '../../shared/picos/interface-status'
 import type { L2Run } from '../../shared/picos/l2'
 import type { L3Run } from '../../shared/picos/l3'
 import type { LogsRun } from '../../shared/picos/logs'
+import {
+  idleTechSupportSnapshot,
+  type TechSupportDeleteRemoteResult,
+  type TechSupportRevealResult,
+  type TechSupportSnapshot,
+  type TechSupportStartResult
+} from '../../shared/picos/tech-support'
 
 function noSession(): DeviceFactsRun {
   return { kind: 'no-session' }
@@ -66,6 +73,45 @@ export function registerDiagnosticsIpc(api: DiagnosticsApi): void {
         return { kind: 'invalid-lines', reason: `invalid log line count: ${JSON.stringify(lines)}` }
       }
       return api.runLogs(profileId, lines)
+    }
+  )
+  ipcMain.handle(
+    'diagnostics:startTechSupport',
+    (_event, profileId: unknown): Promise<TechSupportStartResult> | TechSupportStartResult => {
+      if (typeof profileId !== 'string' || profileId.trim().length === 0) {
+        return { kind: 'no-session' }
+      }
+      return api.startTechSupport(profileId)
+    }
+  )
+  ipcMain.handle(
+    'diagnostics:getTechSupport',
+    (_event, profileId: unknown): TechSupportSnapshot => {
+      if (typeof profileId !== 'string' || profileId.trim().length === 0) {
+        return idleTechSupportSnapshot('')
+      }
+      return api.getTechSupport(profileId)
+    }
+  )
+  ipcMain.handle(
+    'diagnostics:deleteTechSupportRemote',
+    (
+      _event,
+      profileId: unknown
+    ): Promise<TechSupportDeleteRemoteResult> | TechSupportDeleteRemoteResult => {
+      if (typeof profileId !== 'string' || profileId.trim().length === 0) {
+        return { kind: 'no-session' }
+      }
+      return api.deleteTechSupportRemote(profileId)
+    }
+  )
+  ipcMain.handle(
+    'diagnostics:revealTechSupportArtifact',
+    (_event, profileId: unknown): Promise<TechSupportRevealResult> | TechSupportRevealResult => {
+      if (typeof profileId !== 'string' || profileId.trim().length === 0) {
+        return { ok: false, reason: 'no-artifact', message: 'no local artifact' }
+      }
+      return api.revealTechSupportArtifact(profileId)
     }
   )
 }

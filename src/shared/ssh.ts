@@ -6,6 +6,12 @@ import type { L2Run } from './picos/l2'
 import type { L3Run } from './picos/l3'
 import type { LogsRun } from './picos/logs'
 import type {
+  TechSupportDeleteRemoteResult,
+  TechSupportRevealResult,
+  TechSupportSnapshot,
+  TechSupportStartResult
+} from './picos/tech-support'
+import type {
   CreateProfileInput,
   CreateProfileResult,
   DeleteProfileResult,
@@ -118,6 +124,10 @@ export type RendererApi = {
     runL2: (profileId: string) => Promise<L2Run>
     runL3: (profileId: string) => Promise<L3Run>
     runLogs: (profileId: string, lines?: number) => Promise<LogsRun>
+    startTechSupport: (profileId: string) => Promise<TechSupportStartResult>
+    getTechSupport: (profileId: string) => Promise<TechSupportSnapshot>
+    deleteTechSupportRemote: (profileId: string) => Promise<TechSupportDeleteRemoteResult>
+    revealTechSupportArtifact: (profileId: string) => Promise<TechSupportRevealResult>
   }
   mcp: {
     getConfig: () => Promise<McpConfigResult>

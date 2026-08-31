@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { Client, type ClientChannel, utils as ssh2Utils } from 'ssh2'
 import {
   MACHINE_SNAPSHOT_COMMAND,
@@ -71,6 +71,17 @@ export type ExecOnSessionOptions = {
   outputCapBytes?: number
 }
 
+export type SftpGetResult =
+  | { ok: true; bytes: number }
+  | { ok: false; reason: 'no-session' }
+  | { ok: false; reason: 'timeout' | 'io'; message: string }
+
+export type SftpGetOnSessionOptions = {
+  timeoutMs?: number
+}
+
+export const SFTP_GET_TIMEOUT_MS = 30_000
+
 export type SshApi = {
   pickPrivateKey: (sender: SshSender) => Promise<SshKeyPick | null>
   secretRequirement: (profileId: string) => Promise<SshSecretRequirement>
@@ -100,6 +111,12 @@ export type SshApi = {
     command: string,
     options?: ExecOnSessionOptions
   ) => Promise<ExecChannelResult>
+  sftpGetOnSession: (
+    profileId: string,
+    remotePath: string,
+    localPath: string,
+    options?: SftpGetOnSessionOptions
+  ) => Promise<SftpGetResult>
   dropProfileSession: (profileId: string) => void
   disposeSender: (senderId: number) => void
   dispose: () => void
@@ -1540,6 +1557,83 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
         return { ok: false, reason: 'nonzero-exit', exitCode, stdout, stderr }
       }
       return { ok: true, stdout, stderr, exitCode }
+    },
+
+    async sftpGetOnSession(profileId, remotePath, localPath, options) {
+      const sessionId = sessionByProfile.get(profileId.trim())
+      if (sessionId === undefined) {
+        return { ok: false, reason: 'no-session' }
+      }
+      const session = sessions.get(sessionId)
+      if (session === undefined || session.stream === undefined) {
+        return { ok: false, reason: 'no-session' }
+      }
+      try {
+        mkdirSync(dirname(localPath), { recursive: true })
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'could not create local directory'
+        return { ok: false, reason: 'io', message }
+      }
+      return await new Promise<SftpGetResult>((resolve) => {
+        let settled = false
+        let sftpStream: { end: () => void } | undefined
+        let timer: ReturnType<typeof setTimeout> | undefined
+        const timeoutMs = options?.timeoutMs ?? SFTP_GET_TIMEOUT_MS
+        const finish = (result: SftpGetResult): void => {
+          if (settled) {
+            return
+          }
+          settled = true
+          if (timer !== undefined) {
+            clearTimeout(timer)
+          }
+          if (sftpStream !== undefined) {
+            try {
+              sftpStream.end()
+            } catch {
+              // Isolation: closing the SFTP channel must not end the client.
+            }
+          }
+          resolve(result)
+        }
+        timer = setTimeout(() => {
+          finish({ ok: false, reason: 'timeout', message: 'SFTP get timed out' })
+        }, timeoutMs)
+        try {
+          session.client.sftp((err, nextStream) => {
+            if (settled) {
+              nextStream?.end()
+              return
+            }
+            if (err || nextStream === undefined) {
+              finish({
+                ok: false,
+                reason: 'io',
+                message: err?.message ?? 'SFTP unavailable'
+              })
+              return
+            }
+            sftpStream = nextStream
+            nextStream.fastGet(remotePath, localPath, (getErr) => {
+              if (getErr) {
+                finish({ ok: false, reason: 'io', message: getErr.message })
+                return
+              }
+              try {
+                const bytes = statSync(localPath).size
+                finish({ ok: true, bytes })
+              } catch (statErr) {
+                const message =
+                  statErr instanceof Error ? statErr.message : 'could not stat pulled file'
+                finish({ ok: false, reason: 'io', message })
+              }
+            })
+          })
+        } catch (err) {
+          const message = err instanceof Error ? err.message : 'SFTP rejected'
+          finish({ ok: false, reason: 'io', message })
+        }
+      })
     },
 
     dropProfileSession(profileId) {
