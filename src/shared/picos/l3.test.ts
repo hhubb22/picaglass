@@ -397,6 +397,19 @@ describe('l3Card', () => {
     expect(card.parseFailed).toBe(false)
     expect(card.parseFailedNotice).toBeNull()
     expect(card.softwareRoutes).toHaveLength(4)
+    expect(card.softwareRoutes?.[0]).toMatchObject({
+      destination: '0.0.0.0/0',
+      flags: '>*',
+      prefMetric: '0/2',
+      nexthopLabel: '192.0.2.5'
+    })
+    expect(card.softwareRoutes?.[1]).toMatchObject({
+      flags: ' *',
+      nexthopLabel: 'unreachable (blackhole)'
+    })
+    expect(card.softwareRoutes?.[2]).toMatchObject({
+      nexthopLabel: 'connected'
+    })
     expect(card.hardwareRoutes).toHaveLength(3)
     expect(card.hardwareHosts).toEqual([])
     expect(card.arp).toEqual([])

@@ -271,20 +271,6 @@
   function loadSelectedDetail(): void {
     requestedDetailNames = [...selectedNames]
   }
-
-  function softwareNexthop(row: {
-    connected?: boolean
-    unreachable?: boolean
-    nexthop?: string
-  }): string {
-    if (row.connected === true) {
-      return 'connected'
-    }
-    if (row.unreachable === true) {
-      return row.nexthop !== undefined ? `unreachable (${row.nexthop})` : 'unreachable'
-    }
-    return row.nexthop ?? '—'
-  }
 </script>
 
 <section class="panel" class:collapsed>
@@ -860,14 +846,10 @@
                     {#each l3View.softwareRoutes as row, index (`${row.protocol}:${row.destination}:${index}`)}
                       <tr>
                         <td>{row.protocol}</td>
-                        <td>{`${row.selected ? '>' : ' '}${row.fib ? '*' : ' '}`}</td>
+                        <td>{row.flags}</td>
                         <td>{row.destination}</td>
-                        <td>
-                          {row.preference !== undefined || row.metric !== undefined
-                            ? `${row.preference ?? '—'}/${row.metric ?? '—'}`
-                            : '—'}
-                        </td>
-                        <td>{softwareNexthop(row)}</td>
+                        <td>{row.prefMetric}</td>
+                        <td>{row.nexthopLabel}</td>
                         <td>{row.interface ?? '—'}</td>
                         <td>{row.age ?? '—'}</td>
                       </tr>

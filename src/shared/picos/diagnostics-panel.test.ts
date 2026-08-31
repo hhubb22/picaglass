@@ -419,7 +419,10 @@ describe('l3PanelView', () => {
         fib: true,
         destination: '0.0.0.0/0',
         nexthop: '192.0.2.5',
-        interface: 'eth0'
+        interface: 'eth0',
+        flags: '>*',
+        prefMetric: '—',
+        nexthopLabel: '192.0.2.5'
       }
     ])
     expect(view.hardwareRoutes).toEqual([

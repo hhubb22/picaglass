@@ -179,12 +179,32 @@ function isIpv4(value: string): boolean {
   return IPV4.test(value)
 }
 
-function isIpv6(value: string): boolean {
+function looksLikeIpv6(value: string): boolean {
   return value.includes(':') && !isMac(value)
 }
 
 function looksLikeL3Address(value: string): boolean {
-  return isIpv4(value) || isIpv6(value)
+  return isIpv4(value) || looksLikeIpv6(value)
+}
+
+function whitespaceTokens(line: string): string[] {
+  return line
+    .trim()
+    .split(/\s+/)
+    .filter((token) => token.length > 0)
+}
+
+function takeAddressRow(
+  line: string,
+  facts: { unparsedLines: number }
+): { address: string; rest: string[] } | undefined {
+  const tokens = whitespaceTokens(line)
+  const address = optionalCell(tokens[0])
+  if (address === undefined || !looksLikeL3Address(address)) {
+    facts.unparsedLines += 1
+    return undefined
+  }
+  return { address, rest: tokens.slice(1) }
 }
 
 function looksLikeHardwareRouteHeader(line: string): boolean {
@@ -368,18 +388,13 @@ export function parseHardwareRoutes(raw: string): ParsedResult<HardwareRouteFact
     applyHardwareRouteMeta(facts, line)
   }
   for (const line of rawRows) {
-    const tokens = line
-      .trim()
-      .split(/\s+/)
-      .filter((token) => token.length > 0)
-    const destination = optionalCell(tokens[0])
-    if (destination === undefined || !looksLikeL3Address(destination)) {
-      facts.unparsedLines += 1
+    const taken = takeAddressRow(line, facts)
+    if (taken === undefined) {
       continue
     }
-    const row: HardwareRouteRow = { destination }
-    assignOptional(row, 'nextHopMac', optionalCell(tokens[1]))
-    assignOptional(row, 'port', optionalCell(tokens.slice(2).join(' ')))
+    const row: HardwareRouteRow = { destination: taken.address }
+    assignOptional(row, 'nextHopMac', optionalCell(taken.rest[0]))
+    assignOptional(row, 'port', optionalCell(taken.rest.slice(1).join(' ')))
     facts.rows.push(row)
   }
   return parsed(facts, raw)
@@ -407,18 +422,13 @@ export function parseHardwareHosts(raw: string): ParsedResult<HardwareHostFacts>
     applyHardwareHostMeta(facts, line)
   }
   for (const line of rawRows) {
-    const tokens = line
-      .trim()
-      .split(/\s+/)
-      .filter((token) => token.length > 0)
-    const address = optionalCell(tokens[0])
-    if (address === undefined || !looksLikeL3Address(address)) {
-      facts.unparsedLines += 1
+    const taken = takeAddressRow(line, facts)
+    if (taken === undefined) {
       continue
     }
-    const row: HardwareHostRow = { address }
-    assignOptional(row, 'hwAddress', optionalCell(tokens[1]))
-    assignOptional(row, 'port', optionalCell(tokens.slice(2).join(' ')))
+    const row: HardwareHostRow = { address: taken.address }
+    assignOptional(row, 'hwAddress', optionalCell(taken.rest[0]))
+    assignOptional(row, 'port', optionalCell(taken.rest.slice(1).join(' ')))
     facts.rows.push(row)
   }
   return parsed(facts, raw)
@@ -526,10 +536,16 @@ export type ParseFailureView = {
   raw: string
 }
 
+export type SoftwareRouteView = SoftwareRouteRow & {
+  flags: string
+  prefMetric: string
+  nexthopLabel: string
+}
+
 export type L3Card = {
   parseFailed: boolean
   parseFailedNotice: string | null
-  softwareRoutes: SoftwareRouteRow[] | null
+  softwareRoutes: SoftwareRouteView[] | null
   hardwareRoutes: HardwareRouteRow[] | null
   hardwareHosts: HardwareHostRow[] | null
   arp: NeighborRow[] | null
@@ -554,6 +570,29 @@ export type L3Card = {
   neighborsFailure: ParseFailureView | null
 }
 
+function softwareNexthopLabel(row: SoftwareRouteRow): string {
+  if (row.connected === true) {
+    return 'connected'
+  }
+  if (row.unreachable === true) {
+    return row.nexthop !== undefined ? `unreachable (${row.nexthop})` : 'unreachable'
+  }
+  return row.nexthop ?? '—'
+}
+
+function softwareRouteView(row: SoftwareRouteRow): SoftwareRouteView {
+  const prefMetric =
+    row.preference !== undefined || row.metric !== undefined
+      ? `${row.preference ?? '—'}/${row.metric ?? '—'}`
+      : '—'
+  return {
+    ...row,
+    flags: `${row.selected ? '>' : ' '}${row.fib ? '*' : ' '}`,
+    prefMetric,
+    nexthopLabel: softwareNexthopLabel(row)
+  }
+}
+
 function failureView<T>(result: ParsedResult<T>): ParseFailureView | null {
   if (result.status !== 'parse-failed') {
     return null
@@ -574,7 +613,9 @@ export function l3Card(block: L3Block, raw: string): L3Card {
     arpFailure !== null ||
     neighborsFailure !== null
   const softwareRoutes =
-    block.softwareRoutes.status === 'parsed' ? block.softwareRoutes.data.rows : null
+    block.softwareRoutes.status === 'parsed'
+      ? block.softwareRoutes.data.rows.map(softwareRouteView)
+      : null
   const hardwareRoutes =
     block.hardwareRoutes.status === 'parsed' ? block.hardwareRoutes.data.rows : null
   const hardwareHosts =
