@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { RendererApi, SshStatusEvent } from '../shared/ssh'
-import type { CreateProfileInput } from '../shared/profile'
+import type { CreateProfileInput, UpdateProfileInput } from '../shared/profile'
 
 const api: RendererApi = {
   ssh: {
@@ -55,8 +55,11 @@ const api: RendererApi = {
   profiles: {
     load: () => ipcRenderer.invoke('profiles:load'),
     create: (input: CreateProfileInput) => ipcRenderer.invoke('profiles:create', input),
+    update: (input: UpdateProfileInput) => ipcRenderer.invoke('profiles:update', input),
     select: (profileId) => ipcRenderer.invoke('profiles:select', profileId),
-    pickPrivateKey: () => ipcRenderer.invoke('profiles:pickPrivateKey')
+    delete: (profileId) => ipcRenderer.invoke('profiles:delete', profileId),
+    pickPrivateKey: () => ipcRenderer.invoke('profiles:pickPrivateKey'),
+    replacePrivateKey: (profileId) => ipcRenderer.invoke('profiles:replacePrivateKey', profileId)
   },
   workspace: {
     onCloseRequested: (handler) => {

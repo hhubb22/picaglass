@@ -391,3 +391,509 @@ describe('createProfileApi', () => {
     expect(document.sidebarCollapsed).toBe(false)
   })
 })
+
+describe('createProfileApi update, delete, and replacePrivateKey', () => {
+  let userDataPath: string | undefined
+  let api: ProfileApi | undefined
+
+  afterEach(async () => {
+    api = undefined
+    if (userDataPath !== undefined) {
+      await chmod(join(userDataPath, WORKSPACE_DIR), 0o700).catch(() => undefined)
+      await rm(userDataPath, { recursive: true, force: true })
+      userDataPath = undefined
+    }
+  })
+
+  async function tempUserData(): Promise<string> {
+    userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-profiles-edit-'))
+    return userDataPath
+  }
+
+  async function seedFacts(
+    dir: string,
+    profileId: string,
+    snapshot: unknown,
+    attempt: unknown
+  ): Promise<void> {
+    const primary = join(dir, PRIMARY)
+    const raw = JSON.parse(await readFile(primary, 'utf8')) as {
+      latestSnapshots: Record<string, unknown>
+      latestAttempts: Record<string, unknown>
+    }
+    raw.latestSnapshots[profileId] = snapshot
+    raw.latestAttempts[profileId] = attempt
+    await writeFile(primary, `${JSON.stringify(raw, null, 2)}\n`)
+  }
+
+  async function readDocument(dir: string): Promise<{
+    profiles: Array<{
+      id: string
+      host: string
+      port: number
+      username: string
+      auth: { method: string; filePath?: string }
+      displayName?: string
+      automaticDiscovery: boolean
+    }>
+    latestSnapshots: Record<string, unknown>
+    latestAttempts: Record<string, unknown>
+    lastSelectedProfileId: string | null
+  }> {
+    return JSON.parse(await readFile(join(dir, PRIMARY), 'utf8')) as Awaited<
+      ReturnType<typeof readDocument>
+    >
+  }
+
+  it('clears snapshot and latest Connection Attempt in the persisted document when host changes', async () => {
+    const dir = await tempUserData()
+    api = createProfileApi({ userDataPath: dir })
+    const created = await api.create(passwordDraft({ displayName: 'prod db' }))
+    expect(created.ok).toBe(true)
+    if (!created.ok || created.workspace.selectedProfileId === null) {
+      throw new Error('expected create to succeed')
+    }
+    const profileId = created.workspace.selectedProfileId
+    await seedFacts(dir, profileId, { hostname: 'db' }, { outcome: 'remote-ended' })
+    api = createProfileApi({ userDataPath: dir })
+
+    const updated = await api.update({
+      profileId,
+      host: 'other.test',
+      username: 'deploy',
+      auth: { method: 'password' },
+      displayName: 'prod db'
+    })
+    expect(updated.ok).toBe(true)
+    if (!updated.ok) {
+      throw new Error('expected update to succeed')
+    }
+    expect(updated.workspace.profiles[0]).toMatchObject({
+      host: 'other.test',
+      label: 'prod db'
+    })
+    const document = await readDocument(dir)
+    expect(document.latestSnapshots[profileId]).toBeUndefined()
+    expect(document.latestAttempts[profileId]).toBeUndefined()
+    expect(document.profiles[0]?.host).toBe('other.test')
+  })
+
+  it('clears snapshot and latest Connection Attempt in the persisted document when port changes', async () => {
+    const dir = await tempUserData()
+    api = createProfileApi({ userDataPath: dir })
+    const created = await api.create(passwordDraft({ displayName: 'prod db' }))
+    expect(created.ok).toBe(true)
+    if (!created.ok || created.workspace.selectedProfileId === null) {
+      throw new Error('expected create to succeed')
+    }
+    const profileId = created.workspace.selectedProfileId
+    await seedFacts(dir, profileId, { hostname: 'db' }, { outcome: 'remote-ended' })
+    api = createProfileApi({ userDataPath: dir })
+
+    const updated = await api.update({
+      profileId,
+      host: '10.0.4.7',
+      port: 2222,
+      username: 'deploy',
+      auth: { method: 'password' },
+      displayName: 'prod db'
+    })
+    expect(updated.ok).toBe(true)
+    const document = await readDocument(dir)
+    expect(document.latestSnapshots[profileId]).toBeUndefined()
+    expect(document.latestAttempts[profileId]).toBeUndefined()
+    expect(document.profiles[0]?.port).toBe(2222)
+  })
+
+  it('keeps snapshot and clears only latest Connection Attempt when username or Authentication Method changes', async () => {
+    const dir = await tempUserData()
+    api = createProfileApi({ userDataPath: dir })
+    const created = await api.create(passwordDraft())
+    expect(created.ok).toBe(true)
+    if (!created.ok || created.workspace.selectedProfileId === null) {
+      throw new Error('expected create to succeed')
+    }
+    const profileId = created.workspace.selectedProfileId
+    await seedFacts(dir, profileId, { hostname: 'db' }, { outcome: 'remote-ended' })
+    api = createProfileApi({ userDataPath: dir })
+
+    const updated = await api.update({
+      profileId,
+      host: '10.0.4.7',
+      username: 'alice',
+      auth: { method: 'password' }
+    })
+    expect(updated.ok).toBe(true)
+    const document = await readDocument(dir)
+    expect(document.latestSnapshots[profileId]).toEqual({ hostname: 'db' })
+    expect(document.latestAttempts[profileId]).toBeUndefined()
+    expect(document.profiles[0]?.username).toBe('alice')
+  })
+
+  it('keeps snapshot and latest Connection Attempt when only display name or discovery changes', async () => {
+    const dir = await tempUserData()
+    api = createProfileApi({ userDataPath: dir })
+    const created = await api.create(passwordDraft({ displayName: 'prod db' }))
+    expect(created.ok).toBe(true)
+    if (!created.ok || created.workspace.selectedProfileId === null) {
+      throw new Error('expected create to succeed')
+    }
+    const profileId = created.workspace.selectedProfileId
+    await seedFacts(dir, profileId, { hostname: 'db' }, { outcome: 'remote-ended' })
+    api = createProfileApi({ userDataPath: dir })
+
+    const updated = await api.update({
+      profileId,
+      host: '10.0.4.7',
+      username: 'deploy',
+      auth: { method: 'password' },
+      displayName: 'staging db',
+      automaticDiscovery: false
+    })
+    expect(updated.ok).toBe(true)
+    if (!updated.ok) {
+      throw new Error('expected update to succeed')
+    }
+    expect(updated.workspace.profiles[0]).toMatchObject({
+      displayName: 'staging db',
+      automaticDiscovery: false,
+      label: 'staging db'
+    })
+    const document = await readDocument(dir)
+    expect(document.latestSnapshots[profileId]).toEqual({ hostname: 'db' })
+    expect(document.latestAttempts[profileId]).toEqual({ outcome: 'remote-ended' })
+  })
+
+  it('rejects host, port, username, and Authentication Method edits while an SSH Session is occupied and still allows display-name edits', async () => {
+    const dir = await tempUserData()
+    const occupied = new Set<string>()
+    api = createProfileApi({
+      userDataPath: dir,
+      sessions: {
+        isOccupied: (profileId) => occupied.has(profileId),
+        dropSession: async () => undefined
+      }
+    })
+    const created = await api.create(passwordDraft({ displayName: 'prod db' }))
+    expect(created.ok).toBe(true)
+    if (!created.ok || created.workspace.selectedProfileId === null) {
+      throw new Error('expected create to succeed')
+    }
+    const profileId = created.workspace.selectedProfileId
+    occupied.add(profileId)
+
+    const locked = await api.update({
+      profileId,
+      host: 'other.test',
+      username: 'deploy',
+      auth: { method: 'password' },
+      displayName: 'prod db'
+    })
+    expect(locked).toMatchObject({ ok: false, reason: 'session-locked' })
+    expect((await readDocument(dir)).profiles[0]?.host).toBe('10.0.4.7')
+
+    const renamed = await api.update({
+      profileId,
+      host: '10.0.4.7',
+      username: 'deploy',
+      auth: { method: 'password' },
+      displayName: 'staging'
+    })
+    expect(renamed.ok).toBe(true)
+    if (!renamed.ok) {
+      throw new Error('expected display-name update to succeed')
+    }
+    expect(renamed.workspace.profiles[0]?.label).toBe('staging')
+  })
+
+  it('falls back to the next alphabetical profile, then the previous, then empty after delete', async () => {
+    const dir = await tempUserData()
+    api = createProfileApi({ userDataPath: dir })
+    const zeta = await api.create(passwordDraft({ displayName: 'zeta', host: 'z.test' }))
+    const prod = await api.create(
+      passwordDraft({ displayName: 'prod db', host: 'p.test', username: 'alice' })
+    )
+    const alpha = await api.create(passwordDraft({ host: 'alpha.test', username: 'alice' }))
+    expect(zeta.ok && prod.ok && alpha.ok).toBe(true)
+    if (!zeta.ok || !prod.ok || !alpha.ok) {
+      throw new Error('expected creates to succeed')
+    }
+    const zetaId = zeta.workspace.selectedProfileId
+    const prodId = prod.workspace.selectedProfileId
+    const alphaId = alpha.workspace.selectedProfileId
+    if (zetaId === null || prodId === null || alphaId === null) {
+      throw new Error('expected selected ids')
+    }
+
+    await api.select(alphaId)
+    const afterAlpha = await api.delete(alphaId)
+    expect(afterAlpha.ok).toBe(true)
+    if (!afterAlpha.ok) {
+      throw new Error('expected delete to succeed')
+    }
+    expect(afterAlpha.workspace.selectedProfileId).toBe(prodId)
+    expect(afterAlpha.workspace.profiles.map((profile) => profile.label)).toEqual([
+      'prod db',
+      'zeta'
+    ])
+
+    const afterZeta = await api.delete(zetaId)
+    expect(afterZeta.ok).toBe(true)
+    if (!afterZeta.ok) {
+      throw new Error('expected second delete to succeed')
+    }
+    expect(afterZeta.workspace.selectedProfileId).toBe(prodId)
+
+    const afterLast = await api.delete(prodId)
+    expect(afterLast.ok).toBe(true)
+    if (!afterLast.ok) {
+      throw new Error('expected last delete to succeed')
+    }
+    expect(afterLast.workspace).toMatchObject({
+      profiles: [],
+      selectedProfileId: null
+    })
+  })
+
+  it('keeps the current selection when a non-selected profile is deleted', async () => {
+    const dir = await tempUserData()
+    api = createProfileApi({ userDataPath: dir })
+    const zeta = await api.create(passwordDraft({ displayName: 'zeta', host: 'z.test' }))
+    const prod = await api.create(
+      passwordDraft({ displayName: 'prod db', host: 'p.test', username: 'alice' })
+    )
+    const alpha = await api.create(passwordDraft({ host: 'alpha.test', username: 'alice' }))
+    expect(zeta.ok && prod.ok && alpha.ok).toBe(true)
+    if (!zeta.ok || !prod.ok || !alpha.ok) {
+      throw new Error('expected creates to succeed')
+    }
+    const zetaId = zeta.workspace.selectedProfileId
+    const alphaId = alpha.workspace.selectedProfileId
+    if (zetaId === null || alphaId === null) {
+      throw new Error('expected ids')
+    }
+    await api.select(alphaId)
+    const deleted = await api.delete(zetaId)
+    expect(deleted.ok).toBe(true)
+    if (!deleted.ok) {
+      throw new Error('expected delete to succeed')
+    }
+    expect(deleted.workspace.selectedProfileId).toBe(alphaId)
+  })
+
+  it('drops snapshot and attempt for the deleted profile without touching another profile’s facts', async () => {
+    const dir = await tempUserData()
+    api = createProfileApi({ userDataPath: dir })
+    const first = await api.create(passwordDraft({ displayName: 'keep', host: 'keep.test' }))
+    const second = await api.create(passwordDraft({ displayName: 'gone', host: 'gone.test' }))
+    expect(first.ok && second.ok).toBe(true)
+    if (!first.ok || !second.ok) {
+      throw new Error('expected creates to succeed')
+    }
+    const keepId = first.workspace.selectedProfileId
+    const goneId = second.workspace.selectedProfileId
+    if (keepId === null || goneId === null) {
+      throw new Error('expected ids')
+    }
+    await seedFacts(dir, keepId, { hostname: 'keep' }, { outcome: 'remote-ended' })
+    await seedFacts(dir, goneId, { hostname: 'gone' }, { outcome: 'canceled' })
+    api = createProfileApi({ userDataPath: dir })
+
+    const deleted = await api.delete(goneId)
+    expect(deleted.ok).toBe(true)
+    const document = await readDocument(dir)
+    expect(document.latestSnapshots[keepId]).toEqual({ hostname: 'keep' })
+    expect(document.latestAttempts[keepId]).toEqual({ outcome: 'remote-ended' })
+    expect(document.latestSnapshots[goneId]).toBeUndefined()
+    expect(document.latestAttempts[goneId]).toBeUndefined()
+    expect(document.profiles.map((profile) => profile.displayName)).toEqual(['keep'])
+  })
+
+  it('disconnects a live SSH Session when deleting an occupied profile', async () => {
+    const dir = await tempUserData()
+    const ended: string[] = []
+    api = createProfileApi({
+      userDataPath: dir,
+      sessions: {
+        isOccupied: () => true,
+        dropSession: async (profileId) => {
+          ended.push(profileId)
+        }
+      }
+    })
+    const created = await api.create(passwordDraft({ displayName: 'live' }))
+    expect(created.ok).toBe(true)
+    if (!created.ok || created.workspace.selectedProfileId === null) {
+      throw new Error('expected create to succeed')
+    }
+    const profileId = created.workspace.selectedProfileId
+    const deleted = await api.delete(profileId)
+    expect(deleted.ok).toBe(true)
+    expect(ended).toEqual([profileId])
+    expect((await api.load()).profiles).toEqual([])
+  })
+
+  it('replaces a private-key path in one action without returning the full path', async () => {
+    const dir = await tempUserData()
+    const firstKey = join(dir, 'id_ed25519')
+    const secondKey = join(dir, 'replacement')
+    await writeFile(firstKey, 'first-key')
+    await writeFile(secondKey, 'second-key')
+    let pickPath = firstKey
+    api = createProfileApi({
+      userDataPath: dir,
+      dialogs: {
+        showOpenDialog: async () => ({ canceled: false, filePaths: [pickPath] })
+      }
+    })
+    const picked = await api.pickPrivateKey()
+    if (picked === null) {
+      throw new Error('expected a key pick')
+    }
+    const created = await api.create({
+      host: '10.0.4.7',
+      username: 'deploy',
+      auth: { method: 'privateKey', keyRef: picked.keyRef }
+    })
+    expect(created.ok).toBe(true)
+    if (!created.ok || created.workspace.selectedProfileId === null) {
+      throw new Error('expected create to succeed')
+    }
+    const profileId = created.workspace.selectedProfileId
+    expect(JSON.stringify(created.workspace)).not.toContain(firstKey)
+
+    pickPath = secondKey
+    const replaced = await api.replacePrivateKey(profileId)
+    expect(replaced.ok).toBe(true)
+    if (!replaced.ok) {
+      throw new Error('expected replace to succeed')
+    }
+    expect(JSON.stringify(replaced.workspace)).not.toContain(secondKey)
+    expect(replaced.workspace.profiles[0]?.auth).toEqual({
+      method: 'privateKey',
+      label: 'replacement'
+    })
+    const document = await readDocument(dir)
+    expect(document.profiles[0]?.auth).toEqual({ method: 'privateKey', filePath: secondKey })
+    expect(document.latestAttempts[profileId]).toBeUndefined()
+  })
+
+  it('keeps the existing private-key path when an edit does not pick a replacement', async () => {
+    const dir = await tempUserData()
+    const keyPath = join(dir, 'id_ed25519')
+    await writeFile(keyPath, 'key')
+    api = createProfileApi({
+      userDataPath: dir,
+      dialogs: {
+        showOpenDialog: async () => ({ canceled: false, filePaths: [keyPath] })
+      }
+    })
+    const picked = await api.pickPrivateKey()
+    if (picked === null) {
+      throw new Error('expected a key pick')
+    }
+    const created = await api.create({
+      host: '10.0.4.7',
+      username: 'deploy',
+      auth: { method: 'privateKey', keyRef: picked.keyRef }
+    })
+    expect(created.ok).toBe(true)
+    if (!created.ok || created.workspace.selectedProfileId === null) {
+      throw new Error('expected create to succeed')
+    }
+    const profileId = created.workspace.selectedProfileId
+    const updated = await api.update({
+      profileId,
+      host: '10.0.4.7',
+      username: 'deploy',
+      auth: { method: 'privateKey', keepExisting: true },
+      displayName: 'named key'
+    })
+    expect(updated.ok).toBe(true)
+    const document = await readDocument(dir)
+    expect(document.profiles[0]?.auth).toEqual({ method: 'privateKey', filePath: keyPath })
+    expect(document.profiles[0]?.displayName).toBe('named key')
+  })
+
+  it('warns on an update that matches another profile unless Save Anyway is set', async () => {
+    const dir = await tempUserData()
+    api = createProfileApi({ userDataPath: dir })
+    const first = await api.create(passwordDraft({ displayName: 'prod db' }))
+    const second = await api.create(
+      passwordDraft({ displayName: 'other', host: 'other.test', saveAnyway: true })
+    )
+    expect(first.ok && second.ok).toBe(true)
+    if (!first.ok || !second.ok || second.workspace.selectedProfileId === null) {
+      throw new Error('expected creates to succeed')
+    }
+    const blocked = await api.update({
+      profileId: second.workspace.selectedProfileId,
+      host: '10.0.4.7',
+      username: 'deploy',
+      auth: { method: 'password' }
+    })
+    expect(blocked).toMatchObject({
+      ok: false,
+      reason: 'duplicate',
+      existingLabel: 'prod db'
+    })
+    const saved = await api.update({
+      profileId: second.workspace.selectedProfileId,
+      host: '10.0.4.7',
+      username: 'deploy',
+      auth: { method: 'password' },
+      saveAnyway: true
+    })
+    expect(saved.ok).toBe(true)
+  })
+
+  it('returns canceled when the replacement picker is dismissed', async () => {
+    const dir = await tempUserData()
+    api = createProfileApi({
+      userDataPath: dir,
+      dialogs: {
+        showOpenDialog: async () => ({ canceled: true, filePaths: [] })
+      }
+    })
+    const created = await api.create(passwordDraft({ displayName: 'prod db' }))
+    expect(created.ok).toBe(true)
+    if (!created.ok || created.workspace.selectedProfileId === null) {
+      throw new Error('expected create to succeed')
+    }
+    const result = await api.replacePrivateKey(created.workspace.selectedProfileId)
+    expect(result).toMatchObject({ ok: false, reason: 'not-private-key' })
+
+    const keyPath = join(dir, 'id_ed25519')
+    await writeFile(keyPath, 'key')
+    api = createProfileApi({
+      userDataPath: dir,
+      dialogs: {
+        showOpenDialog: async () => ({ canceled: false, filePaths: [keyPath] })
+      }
+    })
+    const picked = await api.pickPrivateKey()
+    if (picked === null) {
+      throw new Error('expected a key pick')
+    }
+    const keyProfile = await api.create({
+      host: 'key.test',
+      username: 'deploy',
+      auth: { method: 'privateKey', keyRef: picked.keyRef }
+    })
+    expect(keyProfile.ok).toBe(true)
+    if (!keyProfile.ok || keyProfile.workspace.selectedProfileId === null) {
+      throw new Error('expected key profile')
+    }
+    api = createProfileApi({
+      userDataPath: dir,
+      dialogs: {
+        showOpenDialog: async () => ({ canceled: true, filePaths: [] })
+      }
+    })
+    const canceled = await api.replacePrivateKey(keyProfile.workspace.selectedProfileId)
+    expect(canceled).toMatchObject({ ok: false, reason: 'canceled' })
+    expect(
+      (await readDocument(dir)).profiles.some((profile) => profile.auth.filePath === keyPath)
+    ).toBe(true)
+  })
+})

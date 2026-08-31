@@ -3,21 +3,27 @@
 
   let {
     draft = $bindable(),
+    title = 'Create Connection Profile',
     keyLabel,
     fields,
     busy,
+    connectionLocked = false,
     onPickKey,
     onSave,
     onCancel
   }: {
     draft: ProfileDraftForm
+    title?: string
     keyLabel: string | null
     fields: ProfileFieldErrors
     busy: boolean
+    connectionLocked?: boolean
     onPickKey: () => void
     onSave: () => void
     onCancel: () => void
   } = $props()
+
+  const connectionDisabled = $derived(busy || connectionLocked)
 </script>
 
 <form
@@ -27,7 +33,13 @@
     onSave()
   }}
 >
-  <h1>Create Connection Profile</h1>
+  <h1>{title}</h1>
+  {#if connectionLocked}
+    <p class="hint">
+      Host, port, username, and Authentication Method are locked while this profile has a pending or
+      live SSH Session. Display name and discovery stay editable.
+    </p>
+  {/if}
 
   <label>
     Display name
@@ -37,7 +49,7 @@
 
   <label>
     Host
-    <input bind:value={draft.host} name="host" autocomplete="off" disabled={busy} />
+    <input bind:value={draft.host} name="host" autocomplete="off" disabled={connectionDisabled} />
     {#if fields.host}
       <span class="error">{fields.host}</span>
     {/if}
@@ -50,7 +62,7 @@
       name="port"
       inputmode="numeric"
       placeholder="22"
-      disabled={busy}
+      disabled={connectionDisabled}
     />
     {#if fields.port}
       <span class="error">{fields.port}</span>
@@ -59,7 +71,12 @@
 
   <label>
     Username
-    <input bind:value={draft.username} name="username" autocomplete="username" disabled={busy} />
+    <input
+      bind:value={draft.username}
+      name="username"
+      autocomplete="username"
+      disabled={connectionDisabled}
+    />
     {#if fields.username}
       <span class="error">{fields.username}</span>
     {/if}
@@ -72,7 +89,7 @@
         type="radio"
         name="authMethod"
         checked={draft.authMethod === 'password'}
-        disabled={busy}
+        disabled={connectionDisabled}
         onchange={() => {
           draft.authMethod = 'password'
         }}
@@ -84,7 +101,7 @@
         type="radio"
         name="authMethod"
         checked={draft.authMethod === 'privateKey'}
-        disabled={busy}
+        disabled={connectionDisabled}
         onchange={() => {
           draft.authMethod = 'privateKey'
         }}
@@ -94,7 +111,9 @@
     {#if draft.authMethod === 'privateKey'}
       <div class="key-row">
         <span class="key-label">{keyLabel === null ? 'No file chosen' : keyLabel}</span>
-        <button type="button" onclick={onPickKey} disabled={busy}>Choose private-key file</button>
+        <button type="button" onclick={onPickKey} disabled={connectionDisabled}>
+          Choose private-key file
+        </button>
       </div>
     {/if}
     {#if fields.auth}
@@ -122,6 +141,7 @@
     display: grid;
     gap: 14px;
     max-width: 32rem;
+    padding: 24px;
   }
 
   h1 {

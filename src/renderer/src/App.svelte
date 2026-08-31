@@ -1,12 +1,16 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte'
   import {
+    deleteProfileConfirmation,
+    draftFromProfile,
     isProfileDraftDirty,
+    isProfileEditDirty,
     parseProfileDraft,
     type CreateProfileInput,
     type ProfileDraftForm,
     type ProfileFieldErrors,
-    type ProfileWorkspace
+    type ProfileWorkspace,
+    type UpdateProfileInput
   } from '../../shared/profile'
   import {
     defaultTab,
@@ -14,13 +18,16 @@
     tabAfterSuccessfulConnect,
     tabWhenSelectingProfile,
     type ConnectFocusContext,
+    type WorkspacePane,
     type WorkspaceTab
   } from '../../shared/profile-workspace-ui'
   import {
     applyConnectResult,
+    applyMissingPrivateKey,
     applySessionStatus,
     beginDisconnect,
     cancelSecretPrompt,
+    connectionFieldsLocked,
     emptyProfileSession,
     promptForSecret,
     submitSecret,
@@ -47,7 +54,7 @@
     selectedProfileId: null,
     notice: null
   })
-  let pane = $state<'empty' | 'create' | 'profile'>('empty')
+  let pane = $state<WorkspacePane>('empty')
   let draft = $state(emptyDraft())
   let keyRef = $state<string | null>(null)
   let keyLabel = $state<string | null>(null)
@@ -55,8 +62,13 @@
   let busy = $state(false)
   let duplicateLabel = $state<string | null>(null)
   let discard = $state<
-    null | { kind: 'cancel' } | { kind: 'select'; profileId: string } | { kind: 'close' }
+    | null
+    | { kind: 'cancel' }
+    | { kind: 'select'; profileId: string }
+    | { kind: 'close' }
+    | { kind: 'create' }
   >(null)
+  let deleteConfirm = $state<null | { profileId: string; label: string; occupied: boolean }>(null)
   let sessions = $state<Record<string, ProfileSessionUi>>({})
   let tabs = $state<Record<string, WorkspaceTab>>({})
   let deferredTerminal = $state<Record<string, boolean>>({})
@@ -70,6 +82,11 @@
   const selectedSession = $derived(
     selected === null ? emptyProfileSession() : (sessions[selected.id] ?? emptyProfileSession())
   )
+  const dirtyEdit = $derived(
+    pane === 'edit' && selected !== null && isProfileEditDirty(draft, selected, keyRef !== null)
+  )
+  const dirtyForm = $derived(dirtyCreation || dirtyEdit)
+  const connectionLocked = $derived(connectionFieldsLocked(selectedSession.state))
   const selectedTab = $derived(
     selected === null ? defaultTab() : (tabs[selected.id] ?? defaultTab())
   )
@@ -94,7 +111,7 @@
   })
 
   $effect(() => {
-    void window.api.workspace.setCloseGuard(dirtyCreation)
+    void window.api.workspace.setCloseGuard(dirtyForm)
   })
 
   function emptyDraft(): ProfileDraftForm {
@@ -126,7 +143,11 @@
         draft.authMethod === 'password'
           ? { method: 'password' }
           : draft.authMethod === 'privateKey'
-            ? { method: 'privateKey', keyRef: keyRef ?? '' }
+            ? keyRef !== null
+              ? { method: 'privateKey', keyRef }
+              : pane === 'edit'
+                ? { method: 'privateKey', keepExisting: true }
+                : { method: 'privateKey', keyRef: '' }
             : { method: undefined },
       automaticDiscovery: draft.automaticDiscovery
     }
@@ -168,15 +189,48 @@
   }
 
   function beginCreate(): void {
-    if (pane === 'create' && isProfileDraftDirty(draft)) {
+    if (pane === 'create' && dirtyCreation) {
+      return
+    }
+    if (dirtyEdit) {
+      discard = { kind: 'create' }
       return
     }
     resetDraft()
     pane = 'create'
   }
 
+  function beginEdit(): void {
+    if (selected === null || dirtyCreation) {
+      return
+    }
+    draft = draftFromProfile(selected)
+    keyRef = null
+    keyLabel = selected.auth.method === 'privateKey' ? selected.auth.label : null
+    fields = {}
+    duplicateLabel = null
+    pane = 'edit'
+  }
+
+  function forgetDeletedProfile(profileId: string): void {
+    const nextSessions = { ...sessions }
+    delete nextSessions[profileId]
+    sessions = nextSessions
+    const nextTabs = { ...tabs }
+    delete nextTabs[profileId]
+    tabs = nextTabs
+    const nextDeferred = { ...deferredTerminal }
+    delete nextDeferred[profileId]
+    deferredTerminal = nextDeferred
+    const nextTranscripts = { ...transcripts }
+    delete nextTranscripts[profileId]
+    transcripts = nextTranscripts
+    terminalIds = terminalIds.filter((id) => id !== profileId)
+    registry.forget(profileId)
+  }
+
   async function selectProfile(profileId: string): Promise<void> {
-    if (pane === 'create' && isProfileDraftDirty(draft)) {
+    if (dirtyForm) {
       discard = { kind: 'select', profileId }
       return
     }
@@ -224,10 +278,7 @@
     }
     const need = await window.api.ssh.secretRequirement(profileId)
     if (!need.ok) {
-      setSession(profileId, {
-        ...current,
-        error: 'The private-key file could not be read.'
-      })
+      setSession(profileId, applyMissingPrivateKey(current))
       return
     }
     if (need.kind === 'password' || need.kind === 'passphrase') {
@@ -348,7 +399,97 @@
     registry.clear(profileId)
   }
 
+  async function saveEdit(saveAnyway = false): Promise<void> {
+    if (selected === null) {
+      return
+    }
+    const base = draftInput(saveAnyway)
+    const input: UpdateProfileInput = { ...base, profileId: selected.id }
+    const parsed = parseProfileDraft(input)
+    if (!parsed.ok) {
+      fields = parsed.fields
+      return
+    }
+    fields = {}
+    busy = true
+    try {
+      const result = await window.api.profiles.update(input)
+      workspace = result.workspace
+      if (result.ok) {
+        resetDraft()
+        pane = 'profile'
+        return
+      }
+      if (result.reason === 'duplicate') {
+        duplicateLabel = result.existingLabel
+        return
+      }
+      if (result.reason === 'invalid') {
+        fields = result.fields
+      }
+    } finally {
+      busy = false
+    }
+  }
+
+  function requestDelete(): void {
+    if (selected === null) {
+      return
+    }
+    deleteConfirm = {
+      profileId: selected.id,
+      label: selected.label,
+      occupied: connectionFieldsLocked(sessionOf(selected.id).state)
+    }
+  }
+
+  async function confirmDelete(): Promise<void> {
+    const pending = deleteConfirm
+    deleteConfirm = null
+    if (pending === null) {
+      return
+    }
+    busy = true
+    try {
+      const result = await window.api.profiles.delete(pending.profileId)
+      workspace = result.workspace
+      if (result.ok) {
+        forgetDeletedProfile(pending.profileId)
+        resetDraft()
+        pane = result.workspace.selectedProfileId === null ? 'empty' : 'profile'
+      }
+    } finally {
+      busy = false
+    }
+  }
+
+  async function replaceMissingKey(profileId: string): Promise<void> {
+    const result = await window.api.profiles.replacePrivateKey(profileId)
+    workspace = result.workspace
+    if (!result.ok) {
+      return
+    }
+    setSession(profileId, {
+      ...sessionOf(profileId),
+      missingPrivateKey: false,
+      error: null
+    })
+    await requestConnect(profileId)
+  }
+
+  function dismissMissingKey(profileId: string): void {
+    const current = sessionOf(profileId)
+    setSession(profileId, {
+      ...emptyProfileSession(),
+      lastOutcome: current.lastOutcome
+    })
+  }
+
   async function save(saveAnyway = false): Promise<void> {
+    if (pane === 'edit') {
+      await saveEdit(saveAnyway)
+      return
+    }
     const input = draftInput(saveAnyway)
     const parsed = parseProfileDraft(input)
     if (!parsed.ok) {
@@ -389,14 +530,14 @@
   }
 
   function requestCancel(): void {
-    if (isProfileDraftDirty(draft)) {
+    if (dirtyForm) {
       discard = { kind: 'cancel' }
       return
     }
-    leaveCreate()
+    leaveForm()
   }
 
-  function leaveCreate(): void {
+  function leaveForm(): void {
     resetDraft()
     const selectedId = workspace.selectedProfileId
     pane = selectedId === null ? 'empty' : 'profile'
@@ -410,13 +551,16 @@
     const intent = discard
     discard = null
     if (intent?.kind === 'close') {
-      leaveCreate()
+      leaveForm()
       void window.api.workspace.confirmClose()
       return
     }
-    leaveCreate()
+    leaveForm()
     if (intent?.kind === 'select') {
       void selectProfile(intent.profileId)
+    }
+    if (intent?.kind === 'create') {
+      beginCreate()
     }
   }
 
@@ -427,7 +571,7 @@
     })
     const stopData = window.api.ssh.onData((sessionId, chunk, profileId) => {
       const id = profileId.length > 0 ? profileId : profileIdForSession(sessionId)
-      if (id === undefined) {
+      if (id === undefined || !workspace.profiles.some((profile) => profile.id === id)) {
         return
       }
       transcripts[id] = appendRemote(transcripts[id] ?? [], chunk)
@@ -438,7 +582,10 @@
         event.profileId !== undefined && event.profileId.length > 0
           ? event.profileId
           : profileIdForSession(event.sessionId)
-      if (profileId === undefined) {
+      if (
+        profileId === undefined ||
+        !workspace.profiles.some((profile) => profile.id === profileId)
+      ) {
         return
       }
       const previous = sessionOf(profileId)
@@ -457,7 +604,7 @@
       }
     })
     const stopClose = window.api.workspace.onCloseRequested(() => {
-      if (pane === 'create' && isProfileDraftDirty(draft)) {
+      if (dirtyForm) {
         discard = { kind: 'close' }
         return
       }
@@ -507,12 +654,14 @@
       </section>
     {/if}
 
-    {#if pane === 'create'}
+    {#if pane === 'create' || pane === 'edit'}
       <ProfileCreateForm
         bind:draft
+        title={pane === 'edit' ? 'Edit Connection Profile' : 'Create Connection Profile'}
         {keyLabel}
         {fields}
         {busy}
+        connectionLocked={pane === 'edit' && connectionLocked}
         onPickKey={() => void pickKey()}
         onSave={() => void save()}
         onCancel={requestCancel}
@@ -532,6 +681,8 @@
           onConnect={() => void requestConnect(selected.id)}
           onDisconnect={() => void disconnectProfile(selected.id)}
           onClearTerminal={() => clearProfileTerminal(selected.id)}
+          onEdit={beginEdit}
+          onDelete={requestDelete}
         />
       </div>
     {/if}
@@ -576,22 +727,55 @@
     }}
   >
     <p>
-      “{duplicateLabel}” already uses this host, port, username, and Authentication Method. Saving
-      anyway creates a new profile with configuration only.
+      “{duplicateLabel}” already uses this host, port, username, and Authentication Method.
+      {#if pane === 'edit'}
+        Saving anyway keeps this profile with that configuration.
+      {:else}
+        Saving anyway creates a new profile with configuration only.
+      {/if}
     </p>
   </AppDialog>
 {/if}
 
 {#if discard !== null}
   <AppDialog
-    title="Discard this unsaved Connection Profile?"
+    title={pane === 'edit' ? 'Discard unsaved edits?' : 'Discard this unsaved Connection Profile?'}
     confirmLabel="Discard"
     onConfirm={confirmDiscard}
     onCancel={() => {
       discard = null
     }}
   >
-    <p>Navigating away or closing will not keep this profile.</p>
+    {#if pane === 'edit'}
+      <p>Navigating away or closing will not keep these edits.</p>
+    {:else}
+      <p>Navigating away or closing will not keep this profile.</p>
+    {/if}
+  </AppDialog>
+{/if}
+
+{#if deleteConfirm !== null}
+  {@const confirmation = deleteProfileConfirmation(deleteConfirm.label, deleteConfirm.occupied)}
+  <AppDialog
+    title={confirmation.title}
+    confirmLabel={confirmation.confirmLabel}
+    onConfirm={() => void confirmDelete()}
+    onCancel={() => {
+      deleteConfirm = null
+    }}
+  >
+    <p>{confirmation.body}</p>
+  </AppDialog>
+{/if}
+
+{#if selected !== null && selectedSession.missingPrivateKey}
+  <AppDialog
+    title="Private-key file missing"
+    confirmLabel="Replace private-key file"
+    onConfirm={() => void replaceMissingKey(selected.id)}
+    onCancel={() => dismissMissingKey(selected.id)}
+  >
+    <p>{selectedSession.error}</p>
   </AppDialog>
 {/if}
 

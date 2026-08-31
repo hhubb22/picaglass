@@ -35,7 +35,10 @@ export function profileLabel(profile: ProfileLabelSource): string {
 }
 
 export type ProfileAuthDraft =
-  { method: 'password' } | { method: 'privateKey'; keyRef: string } | { method?: undefined }
+  | { method: 'password' }
+  | { method: 'privateKey'; keyRef: string }
+  | { method: 'privateKey'; keepExisting: true }
+  | { method?: undefined }
 
 export type ProfileDraftInput = {
   displayName?: string
@@ -58,7 +61,10 @@ export type ParsedProfileDraft = {
   host: string
   port: number
   username: string
-  auth: { method: 'password' } | { method: 'privateKey'; keyRef: string }
+  auth:
+    | { method: 'password' }
+    | { method: 'privateKey'; keyRef: string }
+    | { method: 'privateKey'; keepExisting: true }
   automaticDiscovery: boolean
 }
 
@@ -116,7 +122,9 @@ export function parseProfileDraft(input: ProfileDraftInput): ParseProfileDraftRe
   if (input.auth.method === 'password') {
     auth = { method: 'password' }
   } else if (input.auth.method === 'privateKey') {
-    if (input.auth.keyRef.trim().length === 0) {
+    if ('keepExisting' in input.auth && input.auth.keepExisting) {
+      auth = { method: 'privateKey', keepExisting: true }
+    } else if (!('keyRef' in input.auth) || input.auth.keyRef.trim().length === 0) {
       fields.auth = 'Choose a private-key file'
     } else {
       auth = { method: 'privateKey', keyRef: input.auth.keyRef }
@@ -210,6 +218,101 @@ export function isProfileDraftDirty(draft: ProfileDraftForm): boolean {
   )
 }
 
+export type ProfileConnectionIdentity = {
+  host: string
+  port: number
+  username: string
+  authKey: string
+}
+
+export type ProfileEditClearing = {
+  clearSnapshot: boolean
+  clearAttempt: boolean
+}
+
+export function profileEditClearing(
+  previous: ProfileConnectionIdentity,
+  next: ProfileConnectionIdentity
+): ProfileEditClearing {
+  if (previous.host !== next.host || previous.port !== next.port) {
+    return { clearSnapshot: true, clearAttempt: true }
+  }
+  if (previous.username !== next.username || previous.authKey !== next.authKey) {
+    return { clearSnapshot: false, clearAttempt: true }
+  }
+  return { clearSnapshot: false, clearAttempt: false }
+}
+
+export function nextSelectedProfileIdAfterDeletion<T extends { id: string } & ProfileLabelSource>(
+  profiles: readonly T[],
+  deletedId: string
+): string | null {
+  const sorted = sortProfilesByLabel(profiles)
+  const index = sorted.findIndex((profile) => profile.id === deletedId)
+  const remaining = sorted.filter((profile) => profile.id !== deletedId)
+  if (remaining.length === 0) {
+    return null
+  }
+  if (index < 0) {
+    return remaining[0]?.id ?? null
+  }
+  return remaining[index]?.id ?? remaining[index - 1]?.id ?? null
+}
+
+export type DeleteProfileConfirmation = {
+  title: string
+  confirmLabel: string
+  body: string
+}
+
+export function deleteProfileConfirmation(
+  label: string,
+  occupied: boolean
+): DeleteProfileConfirmation {
+  if (occupied) {
+    return {
+      title: `Disconnect and delete “${label}”?`,
+      confirmLabel: 'Disconnect and delete',
+      body: `This ends the SSH Session for “${label}” and removes the Connection Profile. Shared Trusted Host Keys are kept.`
+    }
+  }
+  return {
+    title: `Delete “${label}”?`,
+    confirmLabel: 'Delete',
+    body: `This removes the Connection Profile “${label}”. Shared Trusted Host Keys are kept.`
+  }
+}
+
+export function draftFromProfile(profile: RendererProfile): ProfileDraftForm {
+  return {
+    displayName: profile.displayName ?? '',
+    host: profile.host,
+    port: String(profile.port),
+    username: profile.username,
+    authMethod: profile.auth.method,
+    automaticDiscovery: profile.automaticDiscovery
+  }
+}
+
+export function isProfileEditDirty(
+  draft: ProfileDraftForm,
+  original: RendererProfile,
+  pickedNewKey: boolean
+): boolean {
+  if (pickedNewKey) {
+    return true
+  }
+  const baseline = draftFromProfile(original)
+  return (
+    draft.displayName !== baseline.displayName ||
+    draft.host !== baseline.host ||
+    draft.port !== baseline.port ||
+    draft.username !== baseline.username ||
+    draft.authMethod !== baseline.authMethod ||
+    draft.automaticDiscovery !== baseline.automaticDiscovery
+  )
+}
+
 export type RendererProfileAuth = { method: 'password' } | { method: 'privateKey'; label: string }
 
 export type RendererProfile = {
@@ -246,5 +349,30 @@ export type SelectProfileResult =
   | { ok: true; workspace: ProfileWorkspace }
   | { ok: false; reason: 'unknown-profile'; workspace: ProfileWorkspace }
   | { ok: false; reason: 'write-failed'; workspace: ProfileWorkspace }
+
+export type UpdateProfileInput = CreateProfileInput & {
+  profileId: string
+}
+
+export type UpdateProfileResult =
+  | { ok: true; workspace: ProfileWorkspace }
+  | { ok: false; reason: 'duplicate'; existingLabel: string; workspace: ProfileWorkspace }
+  | { ok: false; reason: 'invalid'; fields: ProfileFieldErrors; workspace: ProfileWorkspace }
+  | { ok: false; reason: 'write-failed'; workspace: ProfileWorkspace }
+  | { ok: false; reason: 'unknown-profile'; workspace: ProfileWorkspace }
+  | { ok: false; reason: 'session-locked'; workspace: ProfileWorkspace }
+
+export type DeleteProfileResult =
+  | { ok: true; workspace: ProfileWorkspace }
+  | { ok: false; reason: 'unknown-profile'; workspace: ProfileWorkspace }
+  | { ok: false; reason: 'write-failed'; workspace: ProfileWorkspace }
+
+export type ReplacePrivateKeyResult =
+  | { ok: true; workspace: ProfileWorkspace }
+  | {
+      ok: false
+      reason: 'canceled' | 'unknown-profile' | 'not-private-key' | 'write-failed'
+      workspace: ProfileWorkspace
+    }
 
 export type ProfileKeyPick = { keyRef: string; label: string }

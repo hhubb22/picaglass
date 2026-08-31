@@ -66,6 +66,8 @@ export type SshApi = {
   resize: (sessionId: string, cols: number, rows: number, sender: SshSender) => void
   disconnect: (sessionId: string, sender: SshSender) => Promise<void>
   cancel: (profileId: string, sender: SshSender) => Promise<void>
+  hasSession: (profileId: string) => boolean
+  dropProfileSession: (profileId: string) => void
   disposeSender: (senderId: number) => void
   dispose: () => void
 }
@@ -839,6 +841,18 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
       }
       session.settleOpen?.(canceled)
       session.failHandshake?.(canceled)
+      dropSession(sessionId)
+    },
+
+    hasSession(profileId) {
+      return sessionByProfile.has(profileId.trim())
+    },
+
+    dropProfileSession(profileId) {
+      const sessionId = sessionByProfile.get(profileId.trim())
+      if (sessionId === undefined) {
+        return
+      }
       dropSession(sessionId)
     },
 

@@ -57,7 +57,15 @@ describe('preload bridge', () => {
     if (typeof profiles !== 'object' || profiles === null) {
       throw new Error('expected a profiles object')
     }
-    expect(Object.keys(profiles).sort()).toEqual(['create', 'load', 'pickPrivateKey', 'select'])
+    expect(Object.keys(profiles).sort()).toEqual([
+      'create',
+      'delete',
+      'load',
+      'pickPrivateKey',
+      'replacePrivateKey',
+      'select',
+      'update'
+    ])
     const workspace = (api as { workspace: unknown }).workspace
     if (typeof workspace !== 'object' || workspace === null) {
       throw new Error('expected a workspace object')

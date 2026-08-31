@@ -44,6 +44,7 @@ export type ProfileSessionUi = {
   secretKind: SecretKind | null
   error: string | null
   lastOutcome: string | null
+  missingPrivateKey: boolean
 }
 
 export function emptyProfileSession(): ProfileSessionUi {
@@ -54,7 +55,24 @@ export function emptyProfileSession(): ProfileSessionUi {
     secretPrompt: null,
     secretKind: null,
     error: null,
-    lastOutcome: null
+    lastOutcome: null,
+    missingPrivateKey: false
+  }
+}
+
+export function connectionFieldsLocked(state: VisibleSessionState): boolean {
+  return state !== 'no-active-session'
+}
+
+export const MISSING_PRIVATE_KEY_MESSAGE =
+  'The private-key file could not be read. Choose a replacement to save the new path and continue.'
+
+export function applyMissingPrivateKey(session: ProfileSessionUi): ProfileSessionUi {
+  return {
+    ...emptyProfileSession(),
+    lastOutcome: session.lastOutcome,
+    missingPrivateKey: true,
+    error: MISSING_PRIVATE_KEY_MESSAGE
   }
 }
 
@@ -74,7 +92,8 @@ export function promptForSecret(
     ...session,
     secretPrompt: { kind, message },
     secretKind: kind,
-    error: null
+    error: null,
+    missingPrivateKey: false
   }
 }
 
@@ -122,7 +141,8 @@ export function applyConnectResult(
       sessionId: result.sessionId,
       pendingHostKey: null,
       secretPrompt: null,
-      error: null
+      error: null,
+      missingPrivateKey: false
     }
   }
   if (result.reason === 'secret-required') {

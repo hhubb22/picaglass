@@ -20,7 +20,9 @@
     onTab,
     onConnect,
     onDisconnect,
-    onClearTerminal
+    onClearTerminal,
+    onEdit,
+    onDelete
   }: {
     profile: RendererProfile
     tab: WorkspaceTab
@@ -32,6 +34,8 @@
     onConnect: () => void
     onDisconnect: () => void
     onClearTerminal: () => void
+    onEdit: () => void
+    onDelete: () => void
   } = $props()
 
   const authSummary = $derived(
@@ -40,7 +44,7 @@
   const indicator = $derived(sessionIndicator(session.state))
   const idle = $derived(session.state === 'no-active-session')
   const showTerminalEmpty = $derived(idle && transcript.length === 0)
-  const canConnect = $derived(idle && session.secretPrompt === null)
+  const canConnect = $derived(idle && session.secretPrompt === null && !session.missingPrivateKey)
   const canDisconnect = $derived(session.state === 'connected')
 </script>
 
@@ -55,7 +59,13 @@
   </nav>
 
   <div class="overview" class:hidden={tab !== 'overview'}>
-    <h1>{profile.label}</h1>
+    <div class="header">
+      <h1>{profile.label}</h1>
+      <div class="rail">
+        <button type="button" onclick={onEdit}>Edit</button>
+        <button type="button" onclick={onDelete}>Delete</button>
+      </div>
+    </div>
     <article class="card">
       <h2>Session</h2>
       <p class="status">
@@ -96,7 +106,9 @@
     {#if showTerminalEmpty}
       <div class="empty">
         <p>Connect to open an SSH Session for this Connection Profile.</p>
-        <button type="button" onclick={onConnect}>Connect</button>
+        {#if canConnect}
+          <button type="button" onclick={onConnect}>Connect</button>
+        {/if}
       </div>
     {:else}
       <div class="toolbar">
@@ -154,6 +166,19 @@
   h1 {
     font-size: 1.25rem;
     font-weight: 600;
+  }
+
+  .header {
+    display: flex;
+    gap: 12px;
+    align-items: start;
+    justify-content: space-between;
+    max-width: 36rem;
+  }
+
+  .rail {
+    display: flex;
+    gap: 8px;
   }
 
   h2 {

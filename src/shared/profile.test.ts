@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
+  deleteProfileConfirmation,
+  draftFromProfile,
   findDuplicateProfile,
   isProfileDraftDirty,
+  isProfileEditDirty,
+  nextSelectedProfileIdAfterDeletion,
   parseProfileDraft,
+  profileEditClearing,
   profileLabel,
   resolveSelectedProfileId,
   sortProfilesByLabel
@@ -232,6 +237,23 @@ describe('parseProfileDraft', () => {
     })
   })
 
+  it('accepts keeping the existing private-key file when editing', () => {
+    const parsed = parseProfileDraft({
+      ...valid,
+      auth: { method: 'privateKey', keepExisting: true }
+    })
+    expect(parsed).toEqual({
+      ok: true,
+      value: {
+        host: '10.0.4.7',
+        port: 22,
+        username: 'deploy',
+        auth: { method: 'privateKey', keepExisting: true },
+        automaticDiscovery: true
+      }
+    })
+  })
+
   it('honors an explicit automatic discovery toggle', () => {
     const parsed = parseProfileDraft({ ...valid, automaticDiscovery: false })
     expect(parsed.ok).toBe(true)
@@ -340,6 +362,149 @@ describe('resolveSelectedProfileId', () => {
 
   it('returns null when there are no profiles', () => {
     expect(resolveSelectedProfileId('a', [])).toBe(null)
+  })
+})
+
+describe('profileEditClearing', () => {
+  const previous = {
+    host: 'db.test',
+    port: 22,
+    username: 'alice',
+    authKey: 'password'
+  }
+
+  it('clears Machine Snapshot and latest Connection Attempt when host or port changes', () => {
+    expect(profileEditClearing(previous, { ...previous, host: 'other.test' })).toEqual({
+      clearSnapshot: true,
+      clearAttempt: true
+    })
+    expect(profileEditClearing(previous, { ...previous, port: 2222 })).toEqual({
+      clearSnapshot: true,
+      clearAttempt: true
+    })
+  })
+
+  it('keeps Machine Snapshot and clears latest Connection Attempt when username, Authentication Method, or key path changes', () => {
+    expect(profileEditClearing(previous, { ...previous, username: 'bob' })).toEqual({
+      clearSnapshot: false,
+      clearAttempt: true
+    })
+    expect(
+      profileEditClearing(previous, { ...previous, authKey: 'privateKey:/tmp/id_ed25519' })
+    ).toEqual({
+      clearSnapshot: false,
+      clearAttempt: true
+    })
+  })
+
+  it('clears nothing when connection identity is unchanged', () => {
+    expect(profileEditClearing(previous, { ...previous })).toEqual({
+      clearSnapshot: false,
+      clearAttempt: false
+    })
+  })
+
+  it('clears snapshot and attempt when host and login both change', () => {
+    expect(
+      profileEditClearing(previous, {
+        host: 'other.test',
+        port: 22,
+        username: 'bob',
+        authKey: 'password'
+      })
+    ).toEqual({
+      clearSnapshot: true,
+      clearAttempt: true
+    })
+  })
+})
+
+describe('nextSelectedProfileIdAfterDeletion', () => {
+  const alpha = {
+    id: 'a',
+    username: 'alice',
+    host: 'alpha.test',
+    port: 22
+  }
+  const prod = {
+    id: 'p',
+    displayName: 'prod db',
+    username: 'deploy',
+    host: '10.0.4.7',
+    port: 22
+  }
+  const zeta = {
+    id: 'z',
+    displayName: 'zeta',
+    username: 'z',
+    host: 'z.test',
+    port: 22
+  }
+
+  it('selects the next alphabetical profile after deleting the selected one', () => {
+    expect(nextSelectedProfileIdAfterDeletion([zeta, prod, alpha], 'a')).toBe('p')
+  })
+
+  it('selects the previous profile when the deleted profile was last alphabetically', () => {
+    expect(nextSelectedProfileIdAfterDeletion([zeta, prod, alpha], 'z')).toBe('p')
+  })
+
+  it('returns null when the last remaining profile is deleted', () => {
+    expect(nextSelectedProfileIdAfterDeletion([alpha], 'a')).toBe(null)
+  })
+})
+
+describe('deleteProfileConfirmation', () => {
+  it('names the Profile Label when deleting a disconnected profile', () => {
+    expect(deleteProfileConfirmation('prod db', false)).toEqual({
+      title: 'Delete “prod db”?',
+      confirmLabel: 'Delete',
+      body: 'This removes the Connection Profile “prod db”. Shared Trusted Host Keys are kept.'
+    })
+  })
+
+  it('confirms the combined disconnect-and-delete action when a session is live', () => {
+    expect(deleteProfileConfirmation('prod db', true)).toEqual({
+      title: 'Disconnect and delete “prod db”?',
+      confirmLabel: 'Disconnect and delete',
+      body: 'This ends the SSH Session for “prod db” and removes the Connection Profile. Shared Trusted Host Keys are kept.'
+    })
+  })
+})
+
+describe('draftFromProfile and isProfileEditDirty', () => {
+  const profile = {
+    id: 'p1',
+    label: 'prod db',
+    displayName: 'prod db',
+    host: '10.0.4.7',
+    port: 22,
+    username: 'deploy',
+    auth: { method: 'password' as const },
+    automaticDiscovery: true
+  }
+
+  it('loads an edit draft from the saved Connection Profile', () => {
+    expect(draftFromProfile(profile)).toEqual({
+      displayName: 'prod db',
+      host: '10.0.4.7',
+      port: '22',
+      username: 'deploy',
+      authMethod: 'password',
+      automaticDiscovery: true
+    })
+  })
+
+  it('treats an unchanged edit draft as clean', () => {
+    expect(isProfileEditDirty(draftFromProfile(profile), profile, false)).toBe(false)
+  })
+
+  it('treats a display name, discovery, connection, or replacement-key change as dirty', () => {
+    const draft = draftFromProfile(profile)
+    expect(isProfileEditDirty({ ...draft, displayName: 'staging' }, profile, false)).toBe(true)
+    expect(isProfileEditDirty({ ...draft, automaticDiscovery: false }, profile, false)).toBe(true)
+    expect(isProfileEditDirty({ ...draft, host: 'other.test' }, profile, false)).toBe(true)
+    expect(isProfileEditDirty(draft, profile, true)).toBe(true)
   })
 })
 

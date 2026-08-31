@@ -90,6 +90,12 @@ app.whenReady().then(() => {
     },
     resolveProfile: (profileId) => profileApi.getConnectTarget(profileId)
   })
+  profileApi.setSessionHooks({
+    isOccupied: (profileId) => sshApi.hasSession(profileId),
+    dropSession: async (profileId) => {
+      sshApi.dropProfileSession(profileId)
+    }
+  })
   registerSshIpc(sshApi)
   registerProfileIpc(profileApi)
   registerWorkspaceCloseIpc()

@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
   applyConnectResult,
+  applyMissingPrivateKey,
   applySessionStatus,
   beginConnect,
   beginDisconnect,
   cancelSecretPrompt,
+  connectionFieldsLocked,
   emptyProfileSession,
   friendlyAuthFailure,
   SESSION_STATE_LABEL,
@@ -23,6 +25,25 @@ function connecting(overrides?: Partial<ProfileSessionUi>): ProfileSessionUi {
 }
 
 describe('ssh session UI', () => {
+  it('locks host, port, username, and Authentication Method only while an SSH Session is pending or live', () => {
+    expect(connectionFieldsLocked('no-active-session')).toBe(false)
+    expect(connectionFieldsLocked('connecting')).toBe(true)
+    expect(connectionFieldsLocked('verification-required')).toBe(true)
+    expect(connectionFieldsLocked('connected')).toBe(true)
+    expect(connectionFieldsLocked('disconnecting')).toBe(true)
+  })
+
+  it('blocks Connect on a missing private-key file without starting a Connection Attempt', () => {
+    const next = applyMissingPrivateKey(emptyProfileSession())
+    expect(next.state).toBe('no-active-session')
+    expect(next.sessionId).toBe(null)
+    expect(next.lastOutcome).toBe(null)
+    expect(next.missingPrivateKey).toBe(true)
+    expect(next.error).toBe(
+      'The private-key file could not be read. Choose a replacement to save the new path and continue.'
+    )
+  })
+
   it('labels every visible session state and pairs it with a semantic indicator', () => {
     expect(SESSION_STATE_LABEL['no-active-session']).toBe('No active session')
     expect(sessionIndicator('no-active-session')).toBe('idle')

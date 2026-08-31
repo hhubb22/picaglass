@@ -1,6 +1,6 @@
 export type WorkspaceTab = 'overview' | 'terminal'
 
-export type WorkspacePane = 'empty' | 'create' | 'profile'
+export type WorkspacePane = 'empty' | 'create' | 'profile' | 'edit'
 
 export type ConnectFocusContext = {
   connectingProfileId: string

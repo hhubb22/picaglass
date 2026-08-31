@@ -4,18 +4,24 @@ import { basename, join } from 'node:path'
 import { homedir } from 'node:os'
 import {
   findDuplicateProfile,
+  nextSelectedProfileIdAfterDeletion,
   parseProfileDraft,
+  profileEditClearing,
   profileLabel,
   resolveSelectedProfileId,
   sortProfilesByLabel,
   type CreateProfileInput,
   type CreateProfileResult,
+  type DeleteProfileResult,
   type ParsedProfileDraft,
   type ProfileDuplicateKey,
   type ProfileKeyPick,
   type ProfileWorkspace,
   type RendererProfile,
+  type ReplacePrivateKeyResult,
   type SelectProfileResult,
+  type UpdateProfileInput,
+  type UpdateProfileResult,
   type WorkspaceNotice
 } from '../../shared/profile'
 
@@ -27,9 +33,15 @@ export type ProfileDialogs = {
   }) => Promise<{ canceled: boolean; filePaths: string[] }>
 }
 
+export type ProfileSessionHooks = {
+  isOccupied: (profileId: string) => boolean
+  dropSession: (profileId: string) => Promise<void>
+}
+
 export type CreateProfileApiDeps = {
   userDataPath: string
   dialogs?: ProfileDialogs
+  sessions?: ProfileSessionHooks
 }
 
 export type ProfileConnectTarget = {
@@ -43,9 +55,13 @@ export type ProfileConnectTarget = {
 export type ProfileApi = {
   load: () => Promise<ProfileWorkspace>
   create: (input: CreateProfileInput) => Promise<CreateProfileResult>
+  update: (input: UpdateProfileInput) => Promise<UpdateProfileResult>
   select: (profileId: string) => Promise<SelectProfileResult>
+  delete: (profileId: string) => Promise<DeleteProfileResult>
   pickPrivateKey: () => Promise<ProfileKeyPick | null>
+  replacePrivateKey: (profileId: string) => Promise<ReplacePrivateKeyResult>
   getConnectTarget: (profileId: string) => Promise<ProfileConnectTarget | undefined>
+  setSessionHooks: (hooks: ProfileSessionHooks) => void
 }
 
 const SCHEMA_VERSION = 1
@@ -298,10 +314,20 @@ function storedDuplicate(profile: StoredProfile): ProfileDuplicateKey & { label:
 
 function storedAuthFromDraft(
   draft: ParsedProfileDraft,
-  keyFiles: Map<string, string>
+  keyFiles: Map<string, string>,
+  existing?: StoredAuth
 ): StoredAuth | undefined {
   if (draft.auth.method === 'password') {
     return { method: 'password' }
+  }
+  if ('keepExisting' in draft.auth && draft.auth.keepExisting) {
+    if (existing?.method === 'privateKey') {
+      return { method: 'privateKey', filePath: existing.filePath }
+    }
+    return undefined
+  }
+  if (!('keyRef' in draft.auth)) {
+    return undefined
   }
   const filePath = keyFiles.get(draft.auth.keyRef)
   if (filePath === undefined) {
@@ -314,6 +340,7 @@ export function createProfileApi(deps: CreateProfileApiDeps): ProfileApi {
   const keyFiles = new Map<string, string>()
   let document: StoredDocument | undefined
   let notice: WorkspaceNotice | null = null
+  let sessions = deps.sessions
 
   async function ensureLoaded(): Promise<StoredDocument> {
     if (document !== undefined) {
@@ -336,6 +363,53 @@ export function createProfileApi(deps: CreateProfileApiDeps): ProfileApi {
 
   function workspace(): ProfileWorkspace {
     return project(document ?? emptyDocument(), notice)
+  }
+
+  function identityOf(profile: {
+    host: string
+    port: number
+    username: string
+    auth: StoredAuth
+  }): ProfileDuplicateKey {
+    return {
+      host: profile.host,
+      port: profile.port,
+      username: profile.username,
+      authKey: authKey(profile.auth)
+    }
+  }
+
+  function applyEditClearing(
+    next: StoredDocument,
+    profileId: string,
+    clearing: {
+      clearSnapshot: boolean
+      clearAttempt: boolean
+    }
+  ): void {
+    if (clearing.clearSnapshot) {
+      delete next.latestSnapshots[profileId]
+    }
+    if (clearing.clearAttempt) {
+      delete next.latestAttempts[profileId]
+    }
+  }
+
+  async function pickKeyFile(): Promise<{ filePath: string; label: string } | null> {
+    const dialogs = deps.dialogs
+    if (dialogs === undefined) {
+      return null
+    }
+    const result = await dialogs.showOpenDialog({
+      title: 'Choose a private-key file',
+      defaultPath: join(homedir(), '.ssh'),
+      properties: ['openFile']
+    })
+    const filePath = result.filePaths[0]
+    if (result.canceled || filePath === undefined) {
+      return null
+    }
+    return { filePath, label: basename(filePath) }
   }
 
   async function commit(next: StoredDocument): Promise<boolean> {
@@ -430,6 +504,107 @@ export function createProfileApi(deps: CreateProfileApiDeps): ProfileApi {
       return { ok: true, workspace: workspace() }
     },
 
+    async update(input) {
+      await ensureLoaded()
+      const current = workspace()
+      const existing = (document ?? emptyDocument()).profiles.find(
+        (profile) => profile.id === input.profileId
+      )
+      if (existing === undefined) {
+        return { ok: false, reason: 'unknown-profile', workspace: current }
+      }
+      const parsed = parseProfileDraft(input)
+      if (!parsed.ok) {
+        return { ok: false, reason: 'invalid', fields: parsed.fields, workspace: current }
+      }
+      const storedAuth = storedAuthFromDraft(parsed.value, keyFiles, existing.auth)
+      if (storedAuth === undefined) {
+        return {
+          ok: false,
+          reason: 'invalid',
+          fields: { auth: 'Choose a private-key file' },
+          workspace: current
+        }
+      }
+      const nextIdentity = identityOf({
+        host: parsed.value.host,
+        port: parsed.value.port,
+        username: parsed.value.username,
+        auth: storedAuth
+      })
+      const previousIdentity = identityOf(existing)
+      const clearing = profileEditClearing(previousIdentity, nextIdentity)
+      if (clearing.clearAttempt && sessions?.isOccupied(existing.id) === true) {
+        return { ok: false, reason: 'session-locked', workspace: current }
+      }
+      const duplicate = findDuplicateProfile(
+        (document ?? emptyDocument()).profiles
+          .filter((profile) => profile.id !== existing.id)
+          .map(storedDuplicate),
+        nextIdentity
+      )
+      if (duplicate !== undefined && input.saveAnyway !== true) {
+        return {
+          ok: false,
+          reason: 'duplicate',
+          existingLabel: duplicate.label,
+          workspace: current
+        }
+      }
+      const next = cloneDocument(document ?? emptyDocument())
+      const index = next.profiles.findIndex((profile) => profile.id === existing.id)
+      if (index < 0) {
+        return { ok: false, reason: 'unknown-profile', workspace: current }
+      }
+      const updated: StoredProfile = {
+        id: existing.id,
+        host: parsed.value.host,
+        port: parsed.value.port,
+        username: parsed.value.username,
+        auth: storedAuth,
+        automaticDiscovery: parsed.value.automaticDiscovery
+      }
+      if (parsed.value.displayName !== undefined) {
+        updated.displayName = parsed.value.displayName
+      }
+      next.profiles[index] = updated
+      applyEditClearing(next, existing.id, clearing)
+      const written = await commit(next)
+      if (!written) {
+        return { ok: false, reason: 'write-failed', workspace: workspace() }
+      }
+      return { ok: true, workspace: workspace() }
+    },
+
+    async delete(profileId) {
+      await ensureLoaded()
+      const current = workspace()
+      const existing = (document ?? emptyDocument()).profiles.find(
+        (profile) => profile.id === profileId
+      )
+      if (existing === undefined) {
+        return { ok: false, reason: 'unknown-profile', workspace: current }
+      }
+      if (sessions?.isOccupied(profileId) === true) {
+        await sessions.dropSession(profileId)
+      }
+      const before = document ?? emptyDocument()
+      const selectedId = resolveSelectedProfileId(before.lastSelectedProfileId, before.profiles)
+      const next = cloneDocument(before)
+      next.profiles = next.profiles.filter((profile) => profile.id !== profileId)
+      delete next.latestSnapshots[profileId]
+      delete next.latestAttempts[profileId]
+      next.lastSelectedProfileId =
+        selectedId === profileId
+          ? nextSelectedProfileIdAfterDeletion(before.profiles, profileId)
+          : selectedId
+      const written = await commit(next)
+      if (!written) {
+        return { ok: false, reason: 'write-failed', workspace: workspace() }
+      }
+      return { ok: true, workspace: workspace() }
+    },
+
     async getConnectTarget(profileId) {
       await ensureLoaded()
       const profile = (document ?? emptyDocument()).profiles.find((entry) => entry.id === profileId)
@@ -446,22 +621,55 @@ export function createProfileApi(deps: CreateProfileApiDeps): ProfileApi {
     },
 
     async pickPrivateKey() {
-      const dialogs = deps.dialogs
-      if (dialogs === undefined) {
-        return null
-      }
-      const result = await dialogs.showOpenDialog({
-        title: 'Choose a private-key file',
-        defaultPath: join(homedir(), '.ssh'),
-        properties: ['openFile']
-      })
-      const filePath = result.filePaths[0]
-      if (result.canceled || filePath === undefined) {
+      const picked = await pickKeyFile()
+      if (picked === null) {
         return null
       }
       const keyRef = randomUUID()
-      keyFiles.set(keyRef, filePath)
-      return { keyRef, label: basename(filePath) }
+      keyFiles.set(keyRef, picked.filePath)
+      return { keyRef, label: picked.label }
+    },
+
+    async replacePrivateKey(profileId) {
+      await ensureLoaded()
+      const current = workspace()
+      const existing = (document ?? emptyDocument()).profiles.find(
+        (profile) => profile.id === profileId
+      )
+      if (existing === undefined) {
+        return { ok: false, reason: 'unknown-profile', workspace: current }
+      }
+      if (existing.auth.method !== 'privateKey') {
+        return { ok: false, reason: 'not-private-key', workspace: current }
+      }
+      const picked = await pickKeyFile()
+      if (picked === null) {
+        return { ok: false, reason: 'canceled', workspace: current }
+      }
+      const next = cloneDocument(document ?? emptyDocument())
+      const index = next.profiles.findIndex((profile) => profile.id === existing.id)
+      if (index < 0) {
+        return { ok: false, reason: 'unknown-profile', workspace: current }
+      }
+      const updated: StoredProfile = {
+        ...existing,
+        auth: { method: 'privateKey', filePath: picked.filePath }
+      }
+      next.profiles[index] = updated
+      applyEditClearing(
+        next,
+        existing.id,
+        profileEditClearing(identityOf(existing), identityOf(updated))
+      )
+      const written = await commit(next)
+      if (!written) {
+        return { ok: false, reason: 'write-failed', workspace: workspace() }
+      }
+      return { ok: true, workspace: workspace() }
+    },
+
+    setSessionHooks(hooks) {
+      sessions = hooks
     }
   }
 }

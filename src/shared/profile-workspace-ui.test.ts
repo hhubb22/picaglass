@@ -59,4 +59,13 @@ describe('profile workspace tabs and focus', () => {
       )
     ).toBe(false)
   })
+
+  it('treats the edit pane as background so a pending connect does not steal the form', () => {
+    expect(
+      isForegroundConnect(
+        { connectingProfileId: 'p1', selectedProfileId: 'p1', pane: 'profile' },
+        { connectingProfileId: 'p1', selectedProfileId: 'p1', pane: 'edit' }
+      )
+    ).toBe(false)
+  })
 })
