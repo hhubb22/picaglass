@@ -57,8 +57,7 @@ describe('profile edit and delete against a live SSH Session', () => {
     const ssh = createSshApi({
       userDataPath: dir,
       dialogs: {
-        showOpenDialog: async () => ({ canceled: true, filePaths: [] }),
-        showMessageBox: async () => ({ response: 0 })
+        showOpenDialog: async () => ({ canceled: true, filePaths: [] })
       },
       emitTo: (_senderId, channel, payload) => {
         emits?.push({ channel, payload: structuredClone(payload) })
