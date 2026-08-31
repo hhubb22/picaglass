@@ -97,6 +97,7 @@ export type RendererApi = {
     resize: (sessionId: string, cols: number, rows: number) => void
     disconnect: (sessionId: string) => Promise<void>
     cancel: (profileId: string) => Promise<void>
+    disconnectAll: () => Promise<void>
     refreshDiscovery: (profileId: string) => Promise<void>
     onData: (
       handler: (sessionId: string, chunk: Uint8Array, profileId: string) => void

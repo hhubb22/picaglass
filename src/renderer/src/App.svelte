@@ -22,19 +22,26 @@
     type WorkspaceTab
   } from '../../shared/profile-workspace-ui'
   import {
+    activeSessionCount,
     applyConnectResult,
     applyMissingPrivateKey,
     applySessionStatus,
     beginDisconnect,
+    canCancelAttempt,
+    canDisconnectSession,
     cancelSecretPrompt,
     connectionFieldsLocked,
+    disconnectAllConfirmation,
+    disconnectProfileConfirmation,
     dismissSessionFailure,
     emptyProfileSession,
     markAttemptFailureViewed,
     promptForSecret,
     submitSecret,
+    windowCloseConfirmation,
     withAttemptFailure,
-    type ProfileSessionUi
+    type ProfileSessionUi,
+    type SessionConfirmation
   } from '../../shared/ssh-session-ui'
   import { ATTEMPT_OUTCOME_LABEL } from '../../shared/connection-attempt'
   import type { HostTrustState, SshConnectResult, SshHostKeyAction } from '../../shared/ssh'
@@ -76,13 +83,12 @@
   let busy = $state(false)
   let duplicateLabel = $state<string | null>(null)
   let discard = $state<
-    | null
-    | { kind: 'cancel' }
-    | { kind: 'select'; profileId: string }
-    | { kind: 'close' }
-    | { kind: 'create' }
+    null | { kind: 'cancel' } | { kind: 'select'; profileId: string } | { kind: 'create' }
   >(null)
   let deleteConfirm = $state<null | { profileId: string; label: string; occupied: boolean }>(null)
+  let disconnectConfirm = $state<string | null>(null)
+  let disconnectAllPrompt = $state<SessionConfirmation | null>(null)
+  let closePrompt = $state<SessionConfirmation | null>(null)
   let sessions = $state<Record<string, ProfileSessionUi>>({})
   let tabs = $state<Record<string, WorkspaceTab>>({})
   let deferredTerminal = $state<Record<string, boolean>>({})
@@ -103,6 +109,10 @@
     pane === 'edit' && selected !== null && isProfileEditDirty(draft, selected, keyRef !== null)
   )
   const dirtyForm = $derived(dirtyCreation || dirtyEdit)
+  const liveCount = $derived(activeSessionCount(sessions))
+  const unsavedKind = $derived(
+    dirtyEdit ? ('edit' as const) : dirtyCreation ? ('create' as const) : null
+  )
   const connectionLocked = $derived(connectionFieldsLocked(selectedSession.state))
   const selectedTab = $derived(
     selected === null ? defaultTab() : (tabs[selected.id] ?? defaultTab())
@@ -128,7 +138,7 @@
   })
 
   $effect(() => {
-    void window.api.workspace.setCloseGuard(dirtyForm)
+    void window.api.workspace.setCloseGuard(dirtyForm || liveCount > 0)
   })
 
   function emptyDraft(): ProfileDraftForm {
@@ -505,6 +515,70 @@
     await refreshSelectedTrust()
   }
 
+  function requestDisconnect(profileId: string): void {
+    if (!canDisconnectSession(sessionOf(profileId).state)) {
+      return
+    }
+    disconnectConfirm = profileId
+  }
+
+  async function confirmDisconnect(): Promise<void> {
+    const profileId = disconnectConfirm
+    disconnectConfirm = null
+    if (profileId === null) {
+      return
+    }
+    await disconnectProfile(profileId)
+  }
+
+  function requestDisconnectAll(): void {
+    disconnectAllPrompt = disconnectAllConfirmation(liveCount)
+  }
+
+  async function confirmDisconnectAll(): Promise<void> {
+    disconnectAllPrompt = null
+    const snapshot = { ...sessions }
+    for (const [profileId, ui] of Object.entries(snapshot)) {
+      if (ui.state === 'connected' && ui.sessionId !== null) {
+        setSession(profileId, beginDisconnect(ui))
+        registry.setWritable(profileId, null)
+      }
+    }
+    await window.api.ssh.disconnectAll()
+    for (const [profileId, ui] of Object.entries(sessions)) {
+      if (canCancelAttempt(ui.state)) {
+        applySessionUi(
+          profileId,
+          applyConnectResult(ui, { ok: false, reason: 'canceled', message: 'canceled' })
+        )
+      } else if (ui.state === 'disconnecting' && ui.sessionId !== null) {
+        applySessionUi(
+          profileId,
+          applySessionStatus(ui, { sessionId: ui.sessionId, type: 'closed' })
+        )
+      }
+    }
+    await refreshAttempts()
+    await refreshSelectedTrust()
+  }
+
+  async function cancelPending(profileId: string): Promise<void> {
+    const current = sessionOf(profileId)
+    if (!canCancelAttempt(current.state)) {
+      return
+    }
+    await window.api.ssh.cancel(profileId)
+    const next = sessionOf(profileId)
+    if (canCancelAttempt(next.state)) {
+      applySessionUi(
+        profileId,
+        applyConnectResult(next, { ok: false, reason: 'canceled', message: 'canceled' })
+      )
+      await refreshAttempts()
+      await refreshSelectedTrust()
+    }
+  }
+
   function clearProfileTerminal(profileId: string): void {
     transcripts[profileId] = clearTranscript()
     registry.clear(profileId)
@@ -671,11 +745,6 @@
   function confirmDiscard(): void {
     const intent = discard
     discard = null
-    if (intent?.kind === 'close') {
-      leaveForm()
-      void window.api.workspace.confirmClose()
-      return
-    }
     leaveForm()
     if (intent?.kind === 'select') {
       void selectProfile(intent.profileId)
@@ -683,6 +752,14 @@
     if (intent?.kind === 'create') {
       beginCreate()
     }
+  }
+
+  function confirmClosePrompt(): void {
+    closePrompt = null
+    if (dirtyForm) {
+      leaveForm()
+    }
+    void window.api.workspace.confirmClose()
   }
 
   onMount(() => {
@@ -743,11 +820,15 @@
       }
     })
     const stopClose = window.api.workspace.onCloseRequested(() => {
-      if (dirtyForm) {
-        discard = { kind: 'close' }
+      const confirmation = windowCloseConfirmation({
+        unsaved: unsavedKind,
+        activeCount: liveCount
+      })
+      if (confirmation === null) {
+        void window.api.workspace.confirmClose()
         return
       }
-      void window.api.workspace.confirmClose()
+      closePrompt = confirmation
     })
     return () => {
       stopData()
@@ -767,6 +848,7 @@
     {sessions}
     onCreate={beginCreate}
     onSelect={(profileId) => void selectProfile(profileId)}
+    onDisconnectAll={requestDisconnectAll}
   />
 
   <main>
@@ -820,7 +902,8 @@
           {hostTrust}
           onTab={chooseTab}
           onConnect={() => void requestConnect(selected.id)}
-          onDisconnect={() => void disconnectProfile(selected.id)}
+          onCancel={() => void cancelPending(selected.id)}
+          onDisconnect={() => requestDisconnect(selected.id)}
           onClearTerminal={() => clearProfileTerminal(selected.id)}
           onEdit={beginEdit}
           onDelete={requestDelete}
@@ -957,6 +1040,49 @@
     {:else}
       <p>Navigating away or closing will not keep this profile.</p>
     {/if}
+  </AppDialog>
+{/if}
+
+{#if closePrompt !== null}
+  <AppDialog
+    title={closePrompt.title}
+    confirmLabel={closePrompt.confirmLabel}
+    onConfirm={confirmClosePrompt}
+    onCancel={() => {
+      closePrompt = null
+    }}
+  >
+    <p>{closePrompt.body}</p>
+  </AppDialog>
+{/if}
+
+{#if disconnectConfirm !== null}
+  {@const profile = workspace.profiles.find((item) => item.id === disconnectConfirm)}
+  {#if profile !== undefined}
+    {@const confirmation = disconnectProfileConfirmation(profile.label)}
+    <AppDialog
+      title={confirmation.title}
+      confirmLabel={confirmation.confirmLabel}
+      onConfirm={() => void confirmDisconnect()}
+      onCancel={() => {
+        disconnectConfirm = null
+      }}
+    >
+      <p>{confirmation.body}</p>
+    </AppDialog>
+  {/if}
+{/if}
+
+{#if disconnectAllPrompt !== null}
+  <AppDialog
+    title={disconnectAllPrompt.title}
+    confirmLabel={disconnectAllPrompt.confirmLabel}
+    onConfirm={() => void confirmDisconnectAll()}
+    onCancel={() => {
+      disconnectAllPrompt = null
+    }}
+  >
+    <p>{disconnectAllPrompt.body}</p>
   </AppDialog>
 {/if}
 

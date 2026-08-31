@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import {
+  activeSessionCount,
   applyConnectResult,
   applyMissingPrivateKey,
   applySessionStatus,
   beginConnect,
   beginDisconnect,
+  canCancelAttempt,
+  canDisconnectSession,
   cancelSecretPrompt,
   connectionFieldsLocked,
+  disconnectAllConfirmation,
+  disconnectProfileConfirmation,
   dismissSessionFailure,
   emptyProfileSession,
   friendlyAuthFailure,
@@ -14,6 +19,7 @@ import {
   SESSION_STATE_LABEL,
   sessionIndicator,
   submitSecret,
+  windowCloseConfirmation,
   withAttemptFailure,
   type ProfileSessionUi
 } from './ssh-session-ui'
@@ -357,5 +363,100 @@ describe('attempt failure banner and sidebar badge', () => {
     expect(next.secretPrompt).toBe(null)
     expect(next.failureBanner).toEqual(failed.failureBanner)
     expect(next.lastOutcome).toBe('authentication-failed')
+  })
+})
+
+describe('session control availability', () => {
+  it('offers Cancel only while an attempt is pending', () => {
+    expect(canCancelAttempt('no-active-session')).toBe(false)
+    expect(canCancelAttempt('connecting')).toBe(true)
+    expect(canCancelAttempt('verification-required')).toBe(true)
+    expect(canCancelAttempt('connected')).toBe(false)
+    expect(canCancelAttempt('disconnecting')).toBe(false)
+  })
+
+  it('offers Disconnect only while an SSH Session is connected', () => {
+    expect(canDisconnectSession('no-active-session')).toBe(false)
+    expect(canDisconnectSession('connecting')).toBe(false)
+    expect(canDisconnectSession('verification-required')).toBe(false)
+    expect(canDisconnectSession('connected')).toBe(true)
+    expect(canDisconnectSession('disconnecting')).toBe(false)
+  })
+
+  it('counts pending and live sessions, not idle secret prompts', () => {
+    const sessions: Record<string, ProfileSessionUi> = {
+      a: { ...emptyProfileSession(), state: 'connected', sessionId: 's1' },
+      b: { ...emptyProfileSession(), state: 'connecting' },
+      c: emptyProfileSession(),
+      d: beginConnect(emptyProfileSession(), { method: 'password' })
+    }
+    expect(activeSessionCount(sessions)).toBe(2)
+  })
+})
+
+describe('session control confirmations', () => {
+  it('names the Profile Label when confirming Disconnect', () => {
+    expect(disconnectProfileConfirmation('prod db')).toEqual({
+      title: 'Disconnect “prod db”?',
+      confirmLabel: 'Disconnect',
+      body: 'This ends the SSH Session for “prod db”.'
+    })
+  })
+
+  it('confirms Disconnect All with the active session count', () => {
+    expect(disconnectAllConfirmation(1)).toEqual({
+      title: 'Disconnect all sessions?',
+      confirmLabel: 'Disconnect All',
+      body: 'This ends 1 active SSH Session.'
+    })
+    expect(disconnectAllConfirmation(3)).toEqual({
+      title: 'Disconnect all sessions?',
+      confirmLabel: 'Disconnect All',
+      body: 'This ends 3 active SSH Sessions.'
+    })
+    expect(disconnectAllConfirmation(0)).toBe(null)
+  })
+
+  it('warns on window close with the active session count', () => {
+    expect(windowCloseConfirmation({ unsaved: null, activeCount: 2 })).toEqual({
+      title: 'Disconnect sessions and close?',
+      confirmLabel: 'Disconnect and close',
+      body: 'Closing ends 2 active SSH Sessions. No session stays alive after exit.'
+    })
+    expect(windowCloseConfirmation({ unsaved: null, activeCount: 1 })).toEqual({
+      title: 'Disconnect sessions and close?',
+      confirmLabel: 'Disconnect and close',
+      body: 'Closing ends 1 active SSH Session. No session stays alive after exit.'
+    })
+  })
+
+  it('keeps the unsaved-edit close warning when no session is active', () => {
+    expect(windowCloseConfirmation({ unsaved: 'create', activeCount: 0 })).toEqual({
+      title: 'Discard this unsaved Connection Profile?',
+      confirmLabel: 'Discard',
+      body: 'Navigating away or closing will not keep this profile.'
+    })
+    expect(windowCloseConfirmation({ unsaved: 'edit', activeCount: 0 })).toEqual({
+      title: 'Discard unsaved edits?',
+      confirmLabel: 'Discard',
+      body: 'Navigating away or closing will not keep these edits.'
+    })
+  })
+
+  it('describes unsaved edits and active sessions in one close dialog', () => {
+    expect(windowCloseConfirmation({ unsaved: 'edit', activeCount: 2 })).toEqual({
+      title: 'Discard unsaved work and disconnect sessions?',
+      confirmLabel: 'Discard and close',
+      body: 'Unsaved edits will be discarded. Closing also ends 2 active SSH Sessions. No session stays alive after exit.'
+    })
+    expect(windowCloseConfirmation({ unsaved: 'create', activeCount: 1 })).toEqual({
+      title: 'Discard unsaved work and disconnect sessions?',
+      confirmLabel: 'Discard and close',
+      body: 'The unsaved Connection Profile will be discarded. Closing also ends 1 active SSH Session. No session stays alive after exit.'
+    })
+  })
+
+  it('does not prompt when closing a clean workspace with no sessions', () => {
+    expect(windowCloseConfirmation({ unsaved: null, activeCount: 0 })).toBe(null)
   })
 })

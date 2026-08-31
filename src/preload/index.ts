@@ -20,6 +20,7 @@ const api: RendererApi = {
     },
     disconnect: (sessionId) => ipcRenderer.invoke('ssh:disconnect', sessionId),
     cancel: (profileId) => ipcRenderer.invoke('ssh:cancel', profileId),
+    disconnectAll: () => ipcRenderer.invoke('ssh:disconnectAll'),
     refreshDiscovery: (profileId) => ipcRenderer.invoke('ssh:refreshDiscovery', profileId),
     onData: (handler) => {
       const listener = (_event: unknown, payload: unknown): void => {

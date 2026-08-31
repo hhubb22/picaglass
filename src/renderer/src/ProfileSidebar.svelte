@@ -2,6 +2,7 @@
   import type { RendererProfile } from '../../shared/profile'
   import {
     SESSION_STATE_LABEL,
+    activeSessionCount,
     emptyProfileSession,
     sessionIndicator,
     type ProfileSessionUi
@@ -13,7 +14,8 @@
     creating,
     sessions,
     onCreate,
-    onSelect
+    onSelect,
+    onDisconnectAll
   }: {
     profiles: RendererProfile[]
     selectedProfileId: string | null
@@ -21,11 +23,14 @@
     sessions: Record<string, ProfileSessionUi>
     onCreate: () => void
     onSelect: (profileId: string) => void
+    onDisconnectAll: () => void
   } = $props()
 
   function view(profileId: string): ProfileSessionUi {
     return sessions[profileId] ?? emptyProfileSession()
   }
+
+  const liveCount = $derived(activeSessionCount(sessions))
 </script>
 
 <aside class="sidebar">
@@ -64,9 +69,14 @@
     </ul>
   {/if}
 
-  <button type="button" class="create" class:selected={creating} onclick={onCreate}>
-    Create Connection Profile
-  </button>
+  <div class="menu">
+    <button type="button" class="create" class:selected={creating} onclick={onCreate}>
+      Create Connection Profile
+    </button>
+    <button type="button" disabled={liveCount === 0} onclick={onDisconnectAll}>
+      Disconnect All
+    </button>
+  </div>
 </aside>
 
 <style>
@@ -167,7 +177,17 @@
     background: #f3f3f3;
   }
 
+  button:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
   .create {
     border-color: #111;
+  }
+
+  .menu {
+    display: grid;
+    gap: 8px;
   }
 </style>
