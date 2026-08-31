@@ -473,6 +473,7 @@
   .terminal-pane {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
+    height: 100%;
     min-height: 0;
     min-width: 0;
     padding: 8px 8px 8px;
@@ -481,6 +482,7 @@
   .term-and-diagnostics {
     display: flex;
     flex-direction: column;
+    height: 100%;
     min-height: 0;
     min-width: 0;
   }

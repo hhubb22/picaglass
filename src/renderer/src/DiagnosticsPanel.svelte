@@ -281,6 +281,7 @@
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
     flex: 0 0 46%;
+    margin-top: auto;
     min-height: 0;
     border-top: 1px solid var(--border);
     background: var(--bg);
