@@ -52,6 +52,12 @@
               <span class="label">{profile.label}</span>
               <span class="state">{SESSION_STATE_LABEL[session.state]}</span>
             </span>
+            {#if session.unseenFailure}
+              <span class="failure-badge" aria-label="Failed">
+                <span class="badge-icon" aria-hidden="true"></span>
+                <span>Failed</span>
+              </span>
+            {/if}
           </button>
         </li>
       {/each}
@@ -105,7 +111,7 @@
 
   li button {
     display: grid;
-    grid-template-columns: auto 1fr;
+    grid-template-columns: auto 1fr auto;
     gap: 8px;
     align-items: start;
   }
@@ -137,6 +143,22 @@
 
   .indicator.live {
     background: #2f7d32;
+  }
+
+  .failure-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: #b00020;
+    font-size: 0.75rem;
+    margin-top: 0.2rem;
+  }
+
+  .badge-icon {
+    width: 0.45rem;
+    height: 0.45rem;
+    border-radius: 50%;
+    background: #b00020;
   }
 
   button.selected,

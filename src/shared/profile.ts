@@ -1,3 +1,5 @@
+import type { ConnectionAttemptSummary } from './connection-attempt'
+
 export type ProfileLabelSource = {
   displayName?: string
   username: string
@@ -324,6 +326,7 @@ export type RendererProfile = {
   username: string
   auth: RendererProfileAuth
   automaticDiscovery: boolean
+  lastAttempt: ConnectionAttemptSummary | null
 }
 
 export type WorkspaceNotice =

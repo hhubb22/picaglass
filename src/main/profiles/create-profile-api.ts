@@ -3,6 +3,11 @@ import { chmod, copyFile, mkdir, open, readFile, rename } from 'node:fs/promises
 import { basename, join } from 'node:path'
 import { homedir } from 'node:os'
 import {
+  parseConnectionAttempt,
+  recoverInterruptedAttempt,
+  type ConnectionAttemptSummary
+} from '../../shared/connection-attempt'
+import {
   findDuplicateProfile,
   nextSelectedProfileIdAfterDeletion,
   parseProfileDraft,
@@ -42,6 +47,7 @@ export type CreateProfileApiDeps = {
   userDataPath: string
   dialogs?: ProfileDialogs
   sessions?: ProfileSessionHooks
+  now?: () => Date
 }
 
 export type ProfileConnectTarget = {
@@ -61,6 +67,7 @@ export type ProfileApi = {
   pickPrivateKey: () => Promise<ProfileKeyPick | null>
   replacePrivateKey: (profileId: string) => Promise<ReplacePrivateKeyResult>
   getConnectTarget: (profileId: string) => Promise<ProfileConnectTarget | undefined>
+  recordAttempt: (profileId: string, summary: ConnectionAttemptSummary) => Promise<void>
   setSessionHooks: (hooks: ProfileSessionHooks) => void
 }
 
@@ -84,7 +91,7 @@ type StoredDocument = {
   version: number
   profiles: StoredProfile[]
   latestSnapshots: Record<string, unknown>
-  latestAttempts: Record<string, unknown>
+  latestAttempts: Record<string, ConnectionAttemptSummary>
   lastSelectedProfileId: string | null
   sidebarCollapsed: boolean
 }
@@ -169,6 +176,20 @@ function parseStoredProfile(value: unknown): StoredProfile | undefined {
   return profile
 }
 
+function parseAttempts(value: unknown): Record<string, ConnectionAttemptSummary> {
+  if (!isRecord(value)) {
+    return {}
+  }
+  const attempts: Record<string, ConnectionAttemptSummary> = {}
+  for (const [profileId, entry] of Object.entries(value)) {
+    const parsed = parseConnectionAttempt(entry)
+    if (parsed !== undefined) {
+      attempts[profileId] = parsed
+    }
+  }
+  return attempts
+}
+
 function parseDocument(text: string): StoredDocument | undefined {
   let raw: unknown
   try {
@@ -191,7 +212,7 @@ function parseDocument(text: string): StoredDocument | undefined {
     profiles.push(profile)
   }
   const latestSnapshots = isRecord(raw.latestSnapshots) ? { ...raw.latestSnapshots } : {}
-  const latestAttempts = isRecord(raw.latestAttempts) ? { ...raw.latestAttempts } : {}
+  const latestAttempts = parseAttempts(raw.latestAttempts)
   const lastSelectedProfileId =
     typeof raw.lastSelectedProfileId === 'string' || raw.lastSelectedProfileId === null
       ? raw.lastSelectedProfileId
@@ -262,7 +283,10 @@ function authKey(auth: StoredAuth): string {
   return `privateKey:${auth.filePath}`
 }
 
-function toRenderer(profile: StoredProfile): RendererProfile {
+function toRenderer(
+  profile: StoredProfile,
+  attempt: ConnectionAttemptSummary | undefined
+): RendererProfile {
   // Full private-key paths stay in the main-process document. The renderer only gets a label.
   const projected: RendererProfile = {
     id: profile.id,
@@ -274,7 +298,8 @@ function toRenderer(profile: StoredProfile): RendererProfile {
       profile.auth.method === 'password'
         ? { method: 'password' }
         : { method: 'privateKey', label: basename(profile.auth.filePath) },
-    automaticDiscovery: profile.automaticDiscovery
+    automaticDiscovery: profile.automaticDiscovery,
+    lastAttempt: attempt ?? null
   }
   if (profile.displayName !== undefined) {
     projected.displayName = profile.displayName
@@ -285,10 +310,20 @@ function toRenderer(profile: StoredProfile): RendererProfile {
 function project(document: StoredDocument, notice: WorkspaceNotice | null): ProfileWorkspace {
   const sorted = sortProfilesByLabel(document.profiles)
   return {
-    profiles: sorted.map(toRenderer),
+    profiles: sorted.map((profile) => toRenderer(profile, document.latestAttempts[profile.id])),
     selectedProfileId: resolveSelectedProfileId(document.lastSelectedProfileId, document.profiles),
     notice
   }
+}
+
+function cloneAttempts(
+  attempts: Record<string, ConnectionAttemptSummary>
+): Record<string, ConnectionAttemptSummary> {
+  const cloned: Record<string, ConnectionAttemptSummary> = {}
+  for (const [profileId, attempt] of Object.entries(attempts)) {
+    cloned[profileId] = { ...attempt }
+  }
+  return cloned
 }
 
 function cloneDocument(document: StoredDocument): StoredDocument {
@@ -296,7 +331,7 @@ function cloneDocument(document: StoredDocument): StoredDocument {
     version: document.version,
     profiles: document.profiles.map((profile) => ({ ...profile, auth: { ...profile.auth } })),
     latestSnapshots: { ...document.latestSnapshots },
-    latestAttempts: { ...document.latestAttempts },
+    latestAttempts: cloneAttempts(document.latestAttempts),
     lastSelectedProfileId: document.lastSelectedProfileId,
     sidebarCollapsed: document.sidebarCollapsed
   }
@@ -342,19 +377,56 @@ export function createProfileApi(deps: CreateProfileApiDeps): ProfileApi {
   let notice: WorkspaceNotice | null = null
   let sessions = deps.sessions
 
+  function now(): Date {
+    return deps.now?.() ?? new Date()
+  }
+
+  function recoverAttempts(current: StoredDocument): {
+    document: StoredDocument
+    changed: boolean
+  } {
+    let changed = false
+    const latestAttempts = cloneAttempts(current.latestAttempts)
+    for (const [profileId, attempt] of Object.entries(latestAttempts)) {
+      const recovered = recoverInterruptedAttempt(attempt, now())
+      if (recovered !== attempt) {
+        latestAttempts[profileId] = recovered
+        changed = true
+      }
+    }
+    if (!changed) {
+      return { document: current, changed: false }
+    }
+    return { document: { ...current, latestAttempts }, changed: true }
+  }
+
+  async function persistRecovered(current: StoredDocument): Promise<StoredDocument> {
+    const recovered = recoverAttempts(current)
+    if (!recovered.changed) {
+      return current
+    }
+    try {
+      await writeDocument(deps.userDataPath, recovered.document)
+      return recovered.document
+    } catch {
+      notice = { kind: 'write-failed', message: 'The workspace document could not be written.' }
+      return current
+    }
+  }
+
   async function ensureLoaded(): Promise<StoredDocument> {
     if (document !== undefined) {
       return document
     }
     const primary = await readDocumentFile(primaryPath(deps.userDataPath))
     if (primary !== undefined) {
-      document = primary
+      document = await persistRecovered(primary)
       return document
     }
     const backup = await readDocumentFile(backupPath(deps.userDataPath))
     if (backup !== undefined) {
-      document = backup
       notice = { kind: 'recovered-from-backup' }
+      document = await persistRecovered(backup)
       return document
     }
     document = emptyDocument()
@@ -618,6 +690,23 @@ export function createProfileApi(deps: CreateProfileApiDeps): ProfileApi {
         username: profile.username,
         auth: { ...profile.auth }
       }
+    },
+
+    async recordAttempt(profileId, summary) {
+      await ensureLoaded()
+      const exists = (document ?? emptyDocument()).profiles.some(
+        (profile) => profile.id === profileId
+      )
+      if (!exists) {
+        return
+      }
+      const parsed = parseConnectionAttempt(summary)
+      if (parsed === undefined) {
+        return
+      }
+      const next = cloneDocument(document ?? emptyDocument())
+      next.latestAttempts[profileId] = parsed
+      await commit(next)
     },
 
     async pickPrivateKey() {

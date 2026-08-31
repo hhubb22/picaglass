@@ -7,11 +7,14 @@ import {
   beginDisconnect,
   cancelSecretPrompt,
   connectionFieldsLocked,
+  dismissSessionFailure,
   emptyProfileSession,
   friendlyAuthFailure,
+  markAttemptFailureViewed,
   SESSION_STATE_LABEL,
   sessionIndicator,
   submitSecret,
+  withAttemptFailure,
   type ProfileSessionUi
 } from './ssh-session-ui'
 
@@ -85,7 +88,7 @@ describe('ssh session UI', () => {
     const next = cancelSecretPrompt(failed)
     expect(next.state).toBe('no-active-session')
     expect(next.secretPrompt).toBe(null)
-    expect(next.lastOutcome).toBe('authentication failed')
+    expect(next.lastOutcome).toBe('authentication-failed')
   })
 
   it('submitting a secret enters Connecting', () => {
@@ -161,7 +164,7 @@ describe('ssh session UI', () => {
       message: 'All configured authentication methods failed'
     })
     expect(failed.state).toBe('no-active-session')
-    expect(failed.lastOutcome).toBe('authentication failed')
+    expect(failed.lastOutcome).toBe('authentication-failed')
     expect(failed.secretPrompt).toEqual({
       kind: 'password',
       message: friendlyAuthFailure('password')
@@ -229,6 +232,25 @@ describe('ssh session UI', () => {
     expect(next.lastOutcome).toBe('canceled')
   })
 
+  it('records host key rejected when a changed host key is aborted', () => {
+    const pending = applyConnectResult(connecting(), {
+      ok: false,
+      reason: 'host-changed',
+      sessionId: 'pending-2',
+      fingerprint: 'SHA256:new',
+      algorithm: 'ssh-ed25519',
+      previousFingerprint: 'SHA256:old',
+      previousAlgorithm: 'ssh-ed25519'
+    })
+    const next = applyConnectResult(pending, {
+      ok: false,
+      reason: 'canceled',
+      message: 'canceled'
+    })
+    expect(next.lastOutcome).toBe('host-key-rejected')
+    expect(next.state).toBe('no-active-session')
+  })
+
   it('enters Disconnecting then operator-disconnected on a local disconnect', () => {
     const live: ProfileSessionUi = {
       ...emptyProfileSession(),
@@ -240,7 +262,7 @@ describe('ssh session UI', () => {
     const next = applySessionStatus(ending, { sessionId: 'live-1', type: 'closed' })
     expect(next.state).toBe('no-active-session')
     expect(next.sessionId).toBe(null)
-    expect(next.lastOutcome).toBe('operator disconnected')
+    expect(next.lastOutcome).toBe('operator-disconnected')
   })
 
   it('records a remote end with an ended-session outcome', () => {
@@ -251,7 +273,7 @@ describe('ssh session UI', () => {
     }
     const next = applySessionStatus(live, { sessionId: 'live-1', type: 'closed' })
     expect(next.state).toBe('no-active-session')
-    expect(next.lastOutcome).toBe('remote session ended')
+    expect(next.lastOutcome).toBe('remote-session-ended')
   })
 
   it('records a network failure from a session error', () => {
@@ -265,7 +287,7 @@ describe('ssh session UI', () => {
       type: 'error',
       message: 'ECONNRESET'
     })
-    expect(next.lastOutcome).toBe('network failed')
+    expect(next.lastOutcome).toBe('network-failed')
   })
 })
 
@@ -278,5 +300,62 @@ describe('applyConnectResult ignored statuses', () => {
     }
     const next = applySessionStatus(live, { sessionId: 'other', type: 'closed' })
     expect(next).toEqual(live)
+  })
+})
+
+describe('attempt failure banner and sidebar badge', () => {
+  it('shows a dismissible banner without a badge when the failure is on-screen', () => {
+    const failed = applyConnectResult(connecting(), {
+      ok: false,
+      reason: 'timeout',
+      message: 'authentication timed out'
+    })
+    const next = withAttemptFailure(failed, true)
+    expect(next.failureBanner).toEqual({
+      outcome: 'timed-out',
+      detail: 'authentication timed out'
+    })
+    expect(next.unseenFailure).toBe(false)
+  })
+
+  it('keeps a sidebar badge until an off-screen failure is viewed or dismissed', () => {
+    const failed = applyConnectResult(connecting(), {
+      ok: false,
+      reason: 'network',
+      message: 'ECONNRESET'
+    })
+    const next = withAttemptFailure(failed, false)
+    expect(next.unseenFailure).toBe(true)
+    expect(next.failureBanner?.outcome).toBe('network-failed')
+    expect(markAttemptFailureViewed(next).unseenFailure).toBe(false)
+    expect(dismissSessionFailure(next).failureBanner).toBe(null)
+    expect(dismissSessionFailure(next).unseenFailure).toBe(false)
+  })
+
+  it('does not surface a previous failure while an SSH Session is still live', () => {
+    const live = applyConnectResult(connecting({ lastOutcome: 'network-failed' }), {
+      ok: true,
+      sessionId: 'live-1'
+    })
+    const next = withAttemptFailure(live, true)
+    expect(next.state).toBe('connected')
+    expect(next.failureBanner).toBe(null)
+    expect(next.unseenFailure).toBe(false)
+  })
+
+  it('keeps the failure banner when the operator cancels a retry prompt', () => {
+    const failed = withAttemptFailure(
+      applyConnectResult(connecting({ secretKind: 'password' }), {
+        ok: false,
+        reason: 'auth-failed',
+        message: 'All configured authentication methods failed'
+      }),
+      true
+    )
+    const next = cancelSecretPrompt(failed)
+    expect(next.state).toBe('no-active-session')
+    expect(next.secretPrompt).toBe(null)
+    expect(next.failureBanner).toEqual(failed.failureBanner)
+    expect(next.lastOutcome).toBe('authentication-failed')
   })
 })

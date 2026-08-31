@@ -1,5 +1,13 @@
 import type { SshConnectResult, SshStatusEvent } from './ssh'
 import type { PendingHostKey } from './host-trust-ui'
+import {
+  applyAttemptFailure,
+  dismissAttemptFailure,
+  isFailedAttemptOutcome,
+  viewAttemptFailure,
+  type AttemptFailureBanner,
+  type ConnectionAttemptOutcome
+} from './connection-attempt'
 
 export type VisibleSessionState =
   'no-active-session' | 'connecting' | 'verification-required' | 'connected' | 'disconnecting'
@@ -44,8 +52,10 @@ export type ProfileSessionUi = {
   secretPrompt: SecretPrompt | null
   secretKind: SecretKind | null
   error: string | null
-  lastOutcome: string | null
+  lastOutcome: ConnectionAttemptOutcome | null
   missingPrivateKey: boolean
+  failureBanner: AttemptFailureBanner | null
+  unseenFailure: boolean
 }
 
 export function emptyProfileSession(): ProfileSessionUi {
@@ -57,7 +67,9 @@ export function emptyProfileSession(): ProfileSessionUi {
     secretKind: null,
     error: null,
     lastOutcome: null,
-    missingPrivateKey: false
+    missingPrivateKey: false,
+    failureBanner: null,
+    unseenFailure: false
   }
 }
 
@@ -118,7 +130,9 @@ export function cancelSecretPrompt(session: ProfileSessionUi): ProfileSessionUi 
   }
   return {
     ...emptyProfileSession(),
-    lastOutcome: session.lastOutcome
+    lastOutcome: session.lastOutcome,
+    failureBanner: session.failureBanner,
+    unseenFailure: session.unseenFailure
   }
 }
 
@@ -202,7 +216,7 @@ export function applyConnectResult(
     if (session.secretKind !== null) {
       return {
         ...emptyProfileSession(),
-        lastOutcome: 'authentication failed',
+        lastOutcome: 'authentication-failed',
         secretKind: session.secretKind,
         secretPrompt: {
           kind: session.secretKind,
@@ -212,18 +226,20 @@ export function applyConnectResult(
     }
     return {
       ...emptyProfileSession(),
-      lastOutcome: 'authentication failed',
+      lastOutcome: 'authentication-failed',
       error: 'Authentication failed.'
     }
   }
   if (result.reason === 'canceled') {
+    const lastOutcome: ConnectionAttemptOutcome =
+      session.pendingHostKey?.kind === 'changed' ? 'host-key-rejected' : 'canceled'
     return {
       ...emptyProfileSession(),
-      lastOutcome: 'canceled',
-      error: null
+      lastOutcome
     }
   }
-  const lastOutcome = result.reason === 'timeout' ? 'timed out' : 'network failed'
+  const lastOutcome: ConnectionAttemptOutcome =
+    result.reason === 'timeout' ? 'timed-out' : 'network-failed'
   return {
     ...emptyProfileSession(),
     lastOutcome,
@@ -262,14 +278,56 @@ export function applySessionStatus(
       error: null
     }
   }
-  const lastOutcome =
+  const lastOutcome: ConnectionAttemptOutcome =
     session.state === 'disconnecting'
-      ? 'operator disconnected'
+      ? 'operator-disconnected'
       : event.type === 'error'
-        ? 'network failed'
-        : 'remote session ended'
+        ? 'network-failed'
+        : 'remote-session-ended'
   return {
     ...emptyProfileSession(),
     lastOutcome
+  }
+}
+
+export function withAttemptFailure(
+  session: ProfileSessionUi,
+  onScreen: boolean,
+  detail: string | null = session.error
+): ProfileSessionUi {
+  if (session.state !== 'no-active-session' || !isFailedAttemptOutcome(session.lastOutcome)) {
+    return {
+      ...session,
+      failureBanner: null,
+      unseenFailure: false
+    }
+  }
+  const surface = applyAttemptFailure(onScreen, session.lastOutcome, detail)
+  return {
+    ...session,
+    failureBanner: surface.banner,
+    unseenFailure: surface.unseen
+  }
+}
+
+export function markAttemptFailureViewed(session: ProfileSessionUi): ProfileSessionUi {
+  const surface = viewAttemptFailure({
+    banner: session.failureBanner,
+    unseen: session.unseenFailure
+  })
+  return {
+    ...session,
+    failureBanner: surface.banner,
+    unseenFailure: surface.unseen
+  }
+}
+
+export function dismissSessionFailure(session: ProfileSessionUi): ProfileSessionUi {
+  const surface = dismissAttemptFailure()
+  return {
+    ...session,
+    failureBanner: surface.banner,
+    unseenFailure: surface.unseen,
+    error: null
   }
 }
