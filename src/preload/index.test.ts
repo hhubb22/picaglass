@@ -36,7 +36,7 @@ describe('preload bridge', () => {
     if (typeof api !== 'object' || api === null) {
       throw new Error('expected an api object')
     }
-    expect(Object.keys(api).sort()).toEqual(['profiles', 'ssh', 'workspace'])
+    expect(Object.keys(api).sort()).toEqual(['diagnostics', 'profiles', 'ssh', 'workspace'])
     const ssh = (api as { ssh: unknown }).ssh
     if (typeof ssh !== 'object' || ssh === null) {
       throw new Error('expected an ssh object')
@@ -58,6 +58,11 @@ describe('preload bridge', () => {
       'secretRequirement',
       'write'
     ])
+    const diagnostics = (api as { diagnostics: unknown }).diagnostics
+    if (typeof diagnostics !== 'object' || diagnostics === null) {
+      throw new Error('expected a diagnostics object')
+    }
+    expect(Object.keys(diagnostics).sort()).toEqual(['runDeviceFacts'])
     const profiles = (api as { profiles: unknown }).profiles
     if (typeof profiles !== 'object' || profiles === null) {
       throw new Error('expected a profiles object')

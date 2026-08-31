@@ -59,6 +59,18 @@ export type CreateSshApiDeps = {
   recordSnapshot?: (profileId: string, snapshot: MachineSnapshot) => Promise<void>
 }
 
+export type ExecChannelResult =
+  | { ok: true; stdout: string; stderr: string; exitCode: number }
+  | { ok: false; reason: 'no-session' }
+  | { ok: false; reason: 'timeout'; stdout: string; stderr: string }
+  | { ok: false; reason: 'rejected'; message: string }
+  | { ok: false; reason: 'nonzero-exit'; exitCode: number; stdout: string; stderr: string }
+
+export type ExecOnSessionOptions = {
+  timeoutMs?: number
+  outputCapBytes?: number
+}
+
 export type SshApi = {
   pickPrivateKey: (sender: SshSender) => Promise<SshKeyPick | null>
   secretRequirement: (profileId: string) => Promise<SshSecretRequirement>
@@ -82,6 +94,12 @@ export type SshApi = {
   activeSessionCount: (sender?: SshSender) => number
   refreshDiscovery: (profileId: string, sender: SshSender) => Promise<void>
   hasSession: (profileId: string) => boolean
+  hasLiveSession: (profileId: string) => boolean
+  execOnSession: (
+    profileId: string,
+    command: string,
+    options?: ExecOnSessionOptions
+  ) => Promise<ExecChannelResult>
   dropProfileSession: (profileId: string) => void
   disposeSender: (senderId: number) => void
   dispose: () => void
@@ -122,6 +140,7 @@ type SshSession = {
   discoveryInFlight: boolean
   discoveryStream: ClientChannel | undefined
   discoveryTimer: ReturnType<typeof setTimeout> | undefined
+  execStreams: Set<ClientChannel>
 }
 
 function invalid(message: string): { ok: false; reason: 'invalid'; message: string } {
@@ -492,6 +511,7 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
     }
     session.clearAuthTimeout()
     abortDiscovery(session)
+    abortExecStreams(session)
     // A live shell without a recorded end stays on disk so launch recovery can
     // mark it interrupted. Handshake failures already finalized their outcome.
     if (!session.attemptFinalized && session.stream !== undefined) {
@@ -661,6 +681,130 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
       }
     }
     session.discoveryInFlight = false
+  }
+
+  function abortExecStreams(session: SshSession): void {
+    for (const stream of session.execStreams) {
+      try {
+        stream.destroy()
+      } catch {
+        // Exec-channel teardown must never take down the SSH Session.
+      }
+    }
+    session.execStreams.clear()
+  }
+
+  function collectExecOutput(
+    session: SshSession,
+    command: string,
+    timeoutMs: number,
+    capBytes: number
+  ): Promise<{
+    stdout: Buffer
+    stderr: Buffer
+    exitCode: number | undefined
+    timedOut: boolean
+    rejected: boolean
+  }> {
+    return new Promise((resolve) => {
+      const buffers: { stdout: Buffer; stderr: Buffer; total: number } = {
+        stdout: Buffer.alloc(0),
+        stderr: Buffer.alloc(0),
+        total: 0
+      }
+      let settled = false
+      let timedOut = false
+      let rejected = false
+      let exitCode: number | undefined
+      let timer: ReturnType<typeof setTimeout> | undefined
+      let stream: ClientChannel | undefined
+      const finish = (): void => {
+        if (settled) {
+          return
+        }
+        settled = true
+        if (timer !== undefined) {
+          clearTimeout(timer)
+        }
+        if (stream !== undefined) {
+          session.execStreams.delete(stream)
+          try {
+            stream.destroy()
+          } catch {
+            // Isolation: destroying the exec channel must not end the client.
+          }
+        }
+        resolve({
+          stdout: buffers.stdout,
+          stderr: buffers.stderr,
+          exitCode,
+          timedOut,
+          rejected
+        })
+      }
+      const take = (chunk: Uint8Array, dest: Buffer): Buffer => {
+        if (settled) {
+          return dest
+        }
+        const remaining = capBytes - buffers.total
+        if (remaining <= 0) {
+          finish()
+          return dest
+        }
+        const source = chunk.byteLength > remaining ? chunk.subarray(0, remaining) : chunk
+        buffers.total += source.byteLength
+        const next = Buffer.concat([dest, source]) as Buffer
+        if (chunk.byteLength > remaining) {
+          finish()
+        }
+        return next
+      }
+      try {
+        session.client.exec(command, { pty: false }, (err, nextStream) => {
+          if (settled) {
+            nextStream?.destroy()
+            return
+          }
+          if (err || nextStream === undefined) {
+            rejected = true
+            finish()
+            return
+          }
+          stream = nextStream
+          session.execStreams.add(nextStream)
+          nextStream.on('data', (data: Buffer | string) => {
+            if (data instanceof Uint8Array) {
+              buffers.stdout = take(data, buffers.stdout)
+            }
+          })
+          if (nextStream.stderr !== undefined) {
+            nextStream.stderr.on('data', (data: Buffer | string) => {
+              if (data instanceof Uint8Array) {
+                buffers.stderr = take(data, buffers.stderr)
+              }
+            })
+          }
+          nextStream.on('exit', (code: number | null) => {
+            if (typeof code === 'number') {
+              exitCode = code
+            }
+          })
+          nextStream.on('close', () => {
+            finish()
+          })
+          nextStream.on('error', () => {
+            finish()
+          })
+        })
+      } catch {
+        rejected = true
+        finish()
+      }
+      timer = setTimeout(() => {
+        timedOut = true
+        finish()
+      }, timeoutMs)
+    })
   }
 
   async function startAutoDiscovery(sessionId: string): Promise<void> {
@@ -965,7 +1109,8 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
         autoDiscoveryStarted: false,
         discoveryInFlight: false,
         discoveryStream: undefined,
-        discoveryTimer: undefined
+        discoveryTimer: undefined,
+        execStreams: new Set()
       }
       sessions.set(sessionId, session)
       sessionByProfile.set(parsed.profileId, sessionId)
@@ -1350,6 +1495,48 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
 
     hasSession(profileId) {
       return sessionByProfile.has(profileId.trim())
+    },
+
+    hasLiveSession(profileId) {
+      const sessionId = sessionByProfile.get(profileId.trim())
+      if (sessionId === undefined) {
+        return false
+      }
+      const session = sessions.get(sessionId)
+      return session !== undefined && session.stream !== undefined
+    },
+
+    async execOnSession(profileId, command, options) {
+      const sessionId = sessionByProfile.get(profileId.trim())
+      if (sessionId === undefined) {
+        return { ok: false, reason: 'no-session' }
+      }
+      const session = sessions.get(sessionId)
+      if (session === undefined || session.stream === undefined) {
+        return { ok: false, reason: 'no-session' }
+      }
+      const captured = await collectExecOutput(
+        session,
+        command,
+        options?.timeoutMs ?? MACHINE_SNAPSHOT_TIMEOUT_MS,
+        options?.outputCapBytes ?? MACHINE_SNAPSHOT_OUTPUT_CAP_BYTES
+      )
+      if (sessions.get(sessionId) !== session) {
+        return { ok: false, reason: 'no-session' }
+      }
+      if (captured.rejected) {
+        return { ok: false, reason: 'rejected', message: 'exec channel rejected' }
+      }
+      const stdout = captured.stdout.toString('utf8')
+      const stderr = captured.stderr.toString('utf8')
+      if (captured.timedOut) {
+        return { ok: false, reason: 'timeout', stdout, stderr }
+      }
+      const exitCode = captured.exitCode ?? 0
+      if (exitCode !== 0) {
+        return { ok: false, reason: 'nonzero-exit', exitCode, stdout, stderr }
+      }
+      return { ok: true, stdout, stderr, exitCode }
     },
 
     dropProfileSession(profileId) {

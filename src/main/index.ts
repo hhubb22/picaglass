@@ -5,6 +5,8 @@ import icon from '../../resources/icon.png?asset'
 import { bindSshWindow } from './ssh/bind-ssh-window'
 import { createSshApi } from './ssh/create-ssh-api'
 import { registerSshIpc } from './ssh/register-ssh-ipc'
+import { createDiagnosticsApi } from './diagnostics/create-diagnostics-api'
+import { registerDiagnosticsIpc } from './diagnostics/register-diagnostics-ipc'
 import { bindWorkspaceClose, type ClosableWorkspaceWindow } from './profiles/bind-workspace-close'
 import { createProfileApi } from './profiles/create-profile-api'
 import { registerProfileIpc } from './profiles/register-profile-ipc'
@@ -117,6 +119,12 @@ app.whenReady().then(() => {
     }
   })
   registerSshIpc(sshApi)
+  registerDiagnosticsIpc(
+    createDiagnosticsApi({
+      hasLiveSession: (profileId) => sshApi.hasLiveSession(profileId),
+      exec: (profileId, command) => sshApi.execOnSession(profileId, command)
+    })
+  )
   registerProfileIpc(profileApi)
   registerWorkspaceCloseIpc()
 
