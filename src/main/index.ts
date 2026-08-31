@@ -133,7 +133,9 @@ app.whenReady().then(async () => {
         return workspace.profiles.map((profile) => ({ id: profile.id, label: profile.label }))
       },
       hasLiveSession: (profileId) => sshApi.hasLiveSession(profileId),
-      runDeviceFacts: (profileId) => diagnosticsApi.runDeviceFacts(profileId)
+      runDeviceFacts: (profileId) => diagnosticsApi.runDeviceFacts(profileId),
+      runInterfaceStatus: (profileId, interfaces) =>
+        diagnosticsApi.runInterfaceStatus(profileId, interfaces)
     })
   } catch (err) {
     console.error('Failed to start the Agent Interface', err)

@@ -4,9 +4,11 @@ import {
   VIEW_RAW_LABEL,
   deviceFactsPanelView,
   diagnosticBlockTabs,
+  interfaceStatusPanelView,
   needSessionMessage
 } from './diagnostics-panel'
 import type { DeviceFactsRun } from './device-facts'
+import type { InterfaceStatusRun } from './interface-status'
 
 const parsedRun: DeviceFactsRun = {
   kind: 'ok',
@@ -158,5 +160,85 @@ describe('deviceFactsPanelView', () => {
     })
     expect(view.model).toBeUndefined()
     expect(view.fans).toEqual([])
+  })
+})
+
+describe('interfaceStatusPanelView', () => {
+  it('shows 请先连接 when there is no active SSH Session', () => {
+    expect(interfaceStatusPanelView({ kind: 'no-session' })).toEqual({
+      status: 'need-session',
+      message: needSessionMessage()
+    })
+  })
+
+  it('presents a nonzero-exit channel failure without a parse-failed notice', () => {
+    expect(
+      interfaceStatusPanelView({
+        kind: 'channel-failed',
+        reason: 'nonzero-exit',
+        exitCode: 1,
+        stderrHead: "syntax error, expecting 'all'"
+      })
+    ).toEqual({
+      status: 'channel-failed',
+      message: 'Command failed (exit 1)',
+      exitCode: 1,
+      stderrHead: "syntax error, expecting 'all'"
+    })
+  })
+
+  it('surfaces invalid interface names without opening a channel', () => {
+    expect(
+      interfaceStatusPanelView({
+        kind: 'invalid-interfaces',
+        reason: 'invalid interface name: "all"'
+      })
+    ).toEqual({
+      status: 'invalid-interfaces',
+      message: 'invalid interface name: "all"'
+    })
+  })
+
+  it('projects a parsed brief table and empty optics as ready data', () => {
+    const run: InterfaceStatusRun = {
+      kind: 'ok',
+      raw: 'combined-raw',
+      block: {
+        brief: {
+          status: 'parsed',
+          data: {
+            rows: [
+              {
+                name: 'ge-1/1/1',
+                management: 'Enabled',
+                status: 'Down',
+                speed: 'Auto'
+              }
+            ],
+            unparsedLines: 0
+          },
+          raw: 'brief-raw'
+        },
+        optics: {
+          status: 'parsed',
+          data: { rows: [], unparsedLines: 0 },
+          raw: 'optics-raw'
+        },
+        details: null
+      }
+    }
+    const view = interfaceStatusPanelView(run)
+    expect(view.status).toBe('ready')
+    if (view.status !== 'ready') {
+      return
+    }
+    expect(view.parseFailed).toBe(false)
+    expect(view.brief).toEqual([
+      { name: 'ge-1/1/1', management: 'Enabled', status: 'Down', speed: 'Auto' }
+    ])
+    expect(view.optics).toEqual([])
+    expect(view.emptyOpticsNotice).toBe('No optics rows.')
+    expect(view.detailsRequested).toBe(false)
+    expect(view.viewRawLabel).toBe(VIEW_RAW_LABEL)
   })
 })

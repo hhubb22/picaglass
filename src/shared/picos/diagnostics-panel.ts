@@ -5,6 +5,11 @@ import {
   type DeviceFactsCard,
   type DeviceFactsRun
 } from './device-facts'
+import {
+  interfaceStatusCard,
+  type InterfaceStatusCard,
+  type InterfaceStatusRun
+} from './interface-status'
 
 export const NEED_SESSION_MESSAGE = '请先连接'
 export { PARSE_FAILED_NOTICE, VIEW_RAW_LABEL }
@@ -44,7 +49,9 @@ export type DeviceFactsPanelView =
     }
   | ({ status: 'ready' } & DeviceFactsCard)
 
-function channelMessage(run: Extract<DeviceFactsRun, { kind: 'channel-failed' }>): string {
+type ChannelFailed = Extract<DeviceFactsRun, { kind: 'channel-failed' }>
+
+function channelMessage(run: ChannelFailed): string {
   if (run.reason === 'timeout') {
     return 'Command timed out'
   }
@@ -57,20 +64,50 @@ function channelMessage(run: Extract<DeviceFactsRun, { kind: 'channel-failed' }>
   return 'Command failed'
 }
 
+function channelFailedView(
+  run: ChannelFailed
+): Extract<DeviceFactsPanelView, { status: 'channel-failed' }> {
+  const view: Extract<DeviceFactsPanelView, { status: 'channel-failed' }> = {
+    status: 'channel-failed',
+    message: channelMessage(run),
+    stderrHead: run.stderrHead
+  }
+  if (run.exitCode !== undefined) {
+    view.exitCode = run.exitCode
+  }
+  return view
+}
+
 export function deviceFactsPanelView(run: DeviceFactsRun): DeviceFactsPanelView {
   if (run.kind === 'no-session') {
     return { status: 'need-session', message: NEED_SESSION_MESSAGE }
   }
   if (run.kind === 'channel-failed') {
-    const view: Extract<DeviceFactsPanelView, { status: 'channel-failed' }> = {
-      status: 'channel-failed',
-      message: channelMessage(run),
-      stderrHead: run.stderrHead
-    }
-    if (run.exitCode !== undefined) {
-      view.exitCode = run.exitCode
-    }
-    return view
+    return channelFailedView(run)
   }
   return { status: 'ready', ...deviceFactsCard(run.block, run.raw) }
+}
+
+export type InterfaceStatusPanelView =
+  | { status: 'need-session'; message: string }
+  | {
+      status: 'channel-failed'
+      message: string
+      exitCode?: number
+      stderrHead: string
+    }
+  | { status: 'invalid-interfaces'; message: string }
+  | ({ status: 'ready' } & InterfaceStatusCard)
+
+export function interfaceStatusPanelView(run: InterfaceStatusRun): InterfaceStatusPanelView {
+  if (run.kind === 'no-session') {
+    return { status: 'need-session', message: NEED_SESSION_MESSAGE }
+  }
+  if (run.kind === 'invalid-interfaces') {
+    return { status: 'invalid-interfaces', message: run.reason }
+  }
+  if (run.kind === 'channel-failed') {
+    return channelFailedView(run)
+  }
+  return { status: 'ready', ...interfaceStatusCard(run.block, run.raw) }
 }
