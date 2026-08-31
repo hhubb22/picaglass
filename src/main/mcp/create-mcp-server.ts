@@ -21,6 +21,10 @@ import {
 } from '../../shared/mcp-config'
 import type { ParsedResult } from '../../shared/picos/parsed-result'
 import type { DeviceFactsChannelFailure, DeviceFactsRun } from '../../shared/picos/device-facts'
+import type {
+  InterfaceStatusChannelFailure,
+  InterfaceStatusRun
+} from '../../shared/picos/interface-status'
 
 export type McpProfileListing = {
   id: string
@@ -32,6 +36,10 @@ export type CreateMcpServerDeps = {
   listProfiles: () => Promise<McpProfileListing[]>
   hasLiveSession: (profileId: string) => boolean
   runDeviceFacts: (profileId: string) => Promise<DeviceFactsRun>
+  runInterfaceStatus: (
+    profileId: string,
+    interfaces?: readonly string[]
+  ) => Promise<InterfaceStatusRun>
   now?: () => Date
   createToken?: () => string
 }
@@ -184,7 +192,7 @@ function projectResult<T>(result: ParsedResult<T>, includeRaw: boolean): unknown
   return { status: 'parsed', data: result.data }
 }
 
-function channelErrorText(run: DeviceFactsChannelFailure): string {
+function channelErrorText(run: DeviceFactsChannelFailure | InterfaceStatusChannelFailure): string {
   let message = 'Command failed.'
   if (run.reason === 'timeout') {
     message = 'Command timed out.'
@@ -219,6 +227,19 @@ function resolveProfile(
     }
   }
   return { ok: false, message: `Unknown Connection Profile: ${needle}` }
+}
+
+function normalizeInterfaceArg(value: string | string[] | undefined): string[] {
+  if (value === undefined) {
+    return []
+  }
+  if (Array.isArray(value)) {
+    return value
+  }
+  return value
+    .split(',')
+    .map((name) => name.trim())
+    .filter((name) => name.length > 0)
 }
 
 function registerTools(server: McpServer, deps: CreateMcpServerDeps): void {
@@ -281,6 +302,60 @@ function registerTools(server: McpServer, deps: CreateMcpServerDeps): void {
         temperatures: projectResult(run.block.temperatures, withRaw),
         powerSupplies: projectResult(run.block.powerSupplies, withRaw)
       })
+    }
+  )
+
+  server.registerTool(
+    'picos_get_interface_status',
+    {
+      title: 'Get interface status',
+      description:
+        'Get the interface-status Diagnostic Block for a Connection Profile that has an active SSH Session: structured brief table (status, admin state, speed, description) and optics diagnostics. Pass interface names to fetch detail; detail is not pulled for every port by default.',
+      inputSchema: {
+        profile: z.string().min(1).describe('Connection Profile id or Profile Label'),
+        interface: z
+          .union([z.string().min(1), z.array(z.string().min(1))])
+          .optional()
+          .describe(
+            'Interface name or list of names. When set, also fetch show interface detail for those names only.'
+          ),
+        includeRaw: z
+          .boolean()
+          .optional()
+          .describe('When true, include raw command text for parsed results')
+      },
+      annotations: READ_ONLY
+    },
+    async ({ profile, includeRaw, interface: interfaceArg }) => {
+      const profiles = await deps.listProfiles()
+      const resolved = resolveProfile(profiles, profile)
+      if (!resolved.ok) {
+        return mcpToolError(resolved.message)
+      }
+      if (!deps.hasLiveSession(resolved.profile.id)) {
+        return noSessionError(resolved.profile.label)
+      }
+      const names = normalizeInterfaceArg(interfaceArg)
+      const run = await deps.runInterfaceStatus(resolved.profile.id, names)
+      if (run.kind === 'no-session') {
+        return noSessionError(resolved.profile.label)
+      }
+      if (run.kind === 'invalid-interfaces') {
+        return mcpToolError(run.reason)
+      }
+      if (run.kind === 'channel-failed') {
+        return mcpToolError(channelErrorText(run))
+      }
+      const withRaw = includeRaw === true
+      const payload: Record<string, unknown> = {
+        profile: { id: resolved.profile.id, label: resolved.profile.label },
+        brief: projectResult(run.block.brief, withRaw),
+        optics: projectResult(run.block.optics, withRaw)
+      }
+      if (run.block.details !== null) {
+        payload.details = projectResult(run.block.details, withRaw)
+      }
+      return mcpText(payload)
     }
   )
 }

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { deviceFactsCliCommand } from '../../shared/picos/device-facts'
+import { interfaceStatusCliCommand } from '../../shared/picos/interface-status'
 import { createProfileApi, type ProfileApi } from '../profiles/create-profile-api'
 import { createSshApi, type SshApi, type SshSender } from '../ssh/create-ssh-api'
 import {
@@ -263,5 +264,270 @@ describe('device facts diagnostic execution', () => {
     })
     await Promise.all([first, second])
     expect(server?.execs()).toHaveLength(1)
+  })
+})
+
+function noisyInterfaceStatusStdout(detail?: { command: string; output: string }): string {
+  const parts = [
+    'Synchronizing configuration...OK.',
+    'NOTICE TO USERS',
+    'This is a trial license banner line.',
+    'Unauthorized use is prohibited.',
+    '',
+    'Welcome to PICOS',
+    'admin@PICOS> ',
+    '.',
+    'Execute command: show interface brief | no-more',
+    fixture('show-interface-brief.txt'),
+    'admin@PICOS> ',
+    '.',
+    'Execute command: show interface diagnostics optics all | no-more',
+    fixture('show-interface-diagnostics-optics.txt'),
+    'admin@PICOS> '
+  ]
+  if (detail !== undefined) {
+    parts.push('.', `Execute command: ${detail.command} | no-more`, detail.output, 'admin@PICOS> ')
+  }
+  return parts.join('\r\n')
+}
+
+function firstDetailBlock(): string {
+  const raw = fixture('show-interface-detail.txt')
+  const blocks = raw.split(/(?=Physical interface:)/).filter((part) => part.trim().length > 0)
+  const first = blocks[0]
+  if (first === undefined) {
+    throw new Error('expected a physical interface block')
+  }
+  return first.trimEnd()
+}
+
+describe('interface status diagnostic execution', () => {
+  let userDataPath: string | undefined
+  let sshApi: SshApi | undefined
+  let server: TestServer | undefined
+
+  afterEach(async () => {
+    sshApi?.dispose()
+    sshApi = undefined
+    if (server) {
+      await server.close()
+      server = undefined
+    }
+    if (userDataPath) {
+      await rm(userDataPath, { recursive: true, force: true })
+      userDataPath = undefined
+    }
+  })
+
+  async function wired(
+    emits: CapturedEmit[],
+    exec: (command: string) => TestExecResponse,
+    extras?: { diagnosticsTimeoutMs?: number }
+  ): Promise<{ profiles: ProfileApi; ssh: SshApi; diagnostics: DiagnosticsApi }> {
+    const dir = await mkdtemp(join(tmpdir(), 'picaglass-ifstatus-'))
+    userDataPath = dir
+    const hostKey = generateHostKey(dir)
+    server = await startServer(hostKey.pem, { exec })
+    const profiles = createProfileApi({ userDataPath: dir })
+    const ssh = createSshApi({
+      userDataPath: dir,
+      dialogs: {
+        showOpenDialog: async () => ({ canceled: true, filePaths: [] })
+      },
+      emitTo: (_senderId, channel, payload) => {
+        emits.push({ channel, payload: structuredClone(payload) })
+      },
+      resolveProfile: (profileId) => profiles.getConnectTarget(profileId)
+    })
+    sshApi = ssh
+    const diagnostics = createDiagnosticsApi({
+      hasLiveSession: (profileId) => ssh.hasLiveSession(profileId),
+      exec: (profileId, command) =>
+        ssh.execOnSession(profileId, command, { timeoutMs: extras?.diagnosticsTimeoutMs })
+    })
+    return { profiles, ssh, diagnostics }
+  }
+
+  async function saveAndOpen(
+    profiles: ProfileApi,
+    ssh: SshApi,
+    sender: SshSender
+  ): Promise<{ profileId: string; sessionId: string }> {
+    if (server === undefined) {
+      throw new Error('expected a test server')
+    }
+    const created = await profiles.create({
+      displayName: 'lab switch',
+      host: '127.0.0.1',
+      port: server.port,
+      username: 'tester',
+      auth: { method: 'password' },
+      automaticDiscovery: false
+    })
+    if (!created.ok || created.workspace.selectedProfileId === null) {
+      throw new Error(`expected a saved profile, got ${JSON.stringify(created)}`)
+    }
+    const profileId = created.workspace.selectedProfileId
+    const first = await ssh.connectFromProfile(
+      { profileId, secret: 'secret-password', cols: 80, rows: 24 },
+      sender
+    )
+    if (first.ok) {
+      return { profileId, sessionId: first.sessionId }
+    }
+    if (first.reason !== 'host-unknown') {
+      throw new Error(`expected host-unknown, got ${JSON.stringify(first)}`)
+    }
+    const trusted = await ssh.confirmHostKey(first.sessionId, 'trust-always', sender)
+    if (!trusted.ok) {
+      throw new Error(`expected a live session, got ${JSON.stringify(trusted)}`)
+    }
+    return { profileId, sessionId: trusted.sessionId }
+  }
+
+  async function assertShellStillLive(
+    ssh: SshApi,
+    sessionId: string,
+    sender: SshSender,
+    emits: CapturedEmit[],
+    probe: Uint8Array
+  ): Promise<void> {
+    if (server === undefined) {
+      throw new Error('expected a test server')
+    }
+    ssh.write(sessionId, probe, sender)
+    await waitForServerBytes(server, probe)
+    await vi.waitFor(() => {
+      if (!emitsHaveChunk(emits, probe)) {
+        throw new Error('interactive session did not echo after diagnostics')
+      }
+    })
+  }
+
+  it('does not open an exec channel when there is no active SSH Session', async () => {
+    const emits: CapturedEmit[] = []
+    const { profiles, diagnostics } = await wired(emits, () => ({ stdout: 'should-not-run' }))
+    const created = await profiles.create({
+      displayName: 'lab switch',
+      host: '127.0.0.1',
+      port: server?.port ?? 22,
+      username: 'tester',
+      auth: { method: 'password' },
+      automaticDiscovery: false
+    })
+    if (!created.ok || created.workspace.selectedProfileId === null) {
+      throw new Error('expected a saved profile')
+    }
+
+    const run = await diagnostics.runInterfaceStatus(created.workspace.selectedProfileId)
+
+    expect(run).toEqual({ kind: 'no-session' })
+    expect(server?.execs()).toEqual([])
+  })
+
+  it('rejects an invalid interface name without opening an exec channel', async () => {
+    const emits: CapturedEmit[] = []
+    const { profiles, ssh, diagnostics } = await wired(emits, () => ({ stdout: 'should-not-run' }))
+    const sender: SshSender = { id: 1 }
+    const { profileId } = await saveAndOpen(profiles, ssh, sender)
+
+    const run = await diagnostics.runInterfaceStatus(profileId, ['all'])
+
+    expect(run).toEqual({
+      kind: 'invalid-interfaces',
+      reason: 'invalid interface name: "all"'
+    })
+    expect(server?.execs()).toEqual([])
+  })
+
+  it('aggregates brief and optics all on one no-PTY exec and parses noisy empty optics', async () => {
+    const emits: CapturedEmit[] = []
+    const expected = interfaceStatusCliCommand()
+    if (!expected.ok) {
+      throw new Error(expected.reason)
+    }
+    const { profiles, ssh, diagnostics } = await wired(emits, (command) => {
+      if (command === expected.command) {
+        return { stdout: noisyInterfaceStatusStdout() }
+      }
+      return { stdout: '', exitCode: 1 }
+    })
+    const sender: SshSender = { id: 1 }
+    const { profileId, sessionId } = await saveAndOpen(profiles, ssh, sender)
+
+    const run = await diagnostics.runInterfaceStatus(profileId)
+
+    expect(server?.execs()).toEqual([{ command: expected.command, ptyRequested: false }])
+    expect(run.kind).toBe('ok')
+    if (run.kind !== 'ok') {
+      return
+    }
+    expect(run.block.brief.status).toBe('parsed')
+    if (run.block.brief.status === 'parsed') {
+      expect(run.block.brief.data.rows).toHaveLength(33)
+      expect(run.block.brief.data.rows.every((row) => row.status === 'Down')).toBe(true)
+    }
+    expect(run.block.optics).toMatchObject({
+      status: 'parsed',
+      data: { rows: [] }
+    })
+    expect(run.block.details).toBeNull()
+    expect(run.raw.includes('Synchronizing configuration')).toBe(false)
+    await assertShellStillLive(ssh, sessionId, sender, emits, Uint8Array.from([0x61]))
+  })
+
+  it('fetches detail only for named interfaces on the same aggregated exec', async () => {
+    const emits: CapturedEmit[] = []
+    const cli = interfaceStatusCliCommand(['ge-1/1/1'])
+    if (!cli.ok) {
+      throw new Error(cli.reason)
+    }
+    const { profiles, ssh, diagnostics } = await wired(emits, (command) => {
+      if (command === cli.command) {
+        return {
+          stdout: noisyInterfaceStatusStdout({
+            command: 'show interface detail ge-1/1/1',
+            output: firstDetailBlock()
+          })
+        }
+      }
+      return { stdout: '', exitCode: 1 }
+    })
+    const sender: SshSender = { id: 1 }
+    const { profileId, sessionId } = await saveAndOpen(profiles, ssh, sender)
+
+    const run = await diagnostics.runInterfaceStatus(profileId, ['ge-1/1/1'])
+
+    expect(server?.execs()).toEqual([{ command: cli.command, ptyRequested: false }])
+    expect(run.kind).toBe('ok')
+    if (run.kind !== 'ok') {
+      return
+    }
+    expect(run.block.details?.status).toBe('parsed')
+    if (run.block.details?.status === 'parsed') {
+      expect(run.block.details.data.rows.map((row) => row.name)).toEqual(['ge-1/1/1'])
+      expect(run.block.details.data.rows[0]?.link).toBe('Down')
+    }
+    await assertShellStillLive(ssh, sessionId, sender, emits, Uint8Array.from([0x62]))
+  })
+
+  it('treats a nonzero exit as a channel failure, not parse-failed', async () => {
+    const emits: CapturedEmit[] = []
+    const { profiles, ssh, diagnostics } = await wired(emits, () => ({
+      stdout: '',
+      stderr: "syntax error, expecting 'all'\n",
+      exitCode: 1
+    }))
+    const sender: SshSender = { id: 1 }
+    const { profileId } = await saveAndOpen(profiles, ssh, sender)
+
+    const run = await diagnostics.runInterfaceStatus(profileId)
+
+    expect(run).toEqual({
+      kind: 'channel-failed',
+      reason: 'nonzero-exit',
+      exitCode: 1,
+      stderrHead: "syntax error, expecting 'all'\n"
+    })
   })
 })

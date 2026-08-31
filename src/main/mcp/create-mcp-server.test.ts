@@ -6,9 +6,11 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { MCP_ENDPOINT_FILE } from '../../shared/mcp-config'
 import type { DeviceFactsRun } from '../../shared/picos/device-facts'
+import type { InterfaceStatusRun } from '../../shared/picos/interface-status'
 import { createMcpServer, type McpServerHandle } from './create-mcp-server'
 
 type OkDeviceFactsRun = Extract<DeviceFactsRun, { kind: 'ok' }>
+type OkInterfaceStatusRun = Extract<InterfaceStatusRun, { kind: 'ok' }>
 
 const TOKEN = 'b'.repeat(64)
 const STARTED_AT = '2026-08-31T00:00:00.000Z'
@@ -44,6 +46,30 @@ const parsedFacts: OkDeviceFactsRun = {
     fans: { status: 'parsed', data: fansData, raw: 'fan-raw' },
     temperatures: { status: 'parsed', data: temperaturesData, raw: 'temp-raw' },
     powerSupplies: { status: 'parsed', data: powerSuppliesData, raw: 'psu-raw' }
+  }
+}
+
+const briefData = {
+  rows: [
+    {
+      name: 'ge-1/1/1',
+      management: 'Enabled',
+      status: 'Down',
+      speed: 'Auto'
+    }
+  ],
+  unparsedLines: 0
+}
+
+const opticsData = { rows: [] as Array<{ name: string }>, unparsedLines: 0 }
+
+const parsedInterfaces: OkInterfaceStatusRun = {
+  kind: 'ok',
+  raw: 'if-raw',
+  block: {
+    brief: { status: 'parsed', data: briefData, raw: 'brief-raw' },
+    optics: { status: 'parsed', data: opticsData, raw: 'optics-raw' },
+    details: null
   }
 }
 
@@ -206,6 +232,10 @@ describe('embedded MCP server', () => {
     listProfiles?: () => Promise<Array<{ id: string; label: string }>>
     hasLiveSession?: (profileId: string) => boolean
     runDeviceFacts?: (profileId: string) => Promise<DeviceFactsRun>
+    runInterfaceStatus?: (
+      profileId: string,
+      interfaces?: readonly string[]
+    ) => Promise<InterfaceStatusRun>
     createToken?: () => string
     now?: () => Date
   }): Promise<{ dir: string; handle: McpServerHandle }> {
@@ -216,6 +246,7 @@ describe('embedded MCP server', () => {
       listProfiles: async () => [],
       hasLiveSession: () => false,
       runDeviceFacts: async () => ({ kind: 'no-session' }),
+      runInterfaceStatus: async () => ({ kind: 'no-session' }),
       createToken: () => TOKEN,
       now: () => new Date(STARTED_AT),
       ...overrides
@@ -482,5 +513,162 @@ describe('embedded MCP server', () => {
     const result = await callTool(handle, sessionId, 'picos_get_device_facts', { profile: 'p-lab' })
     expect(result.isError).toBe(true)
     expect(result.text).toBe('Command timed out.\npartial output')
+  })
+
+  it('returns structured interface brief and empty optics without detail or raw by default', async () => {
+    const seen: Array<{ profileId: string; interfaces?: readonly string[] }> = []
+    const { handle } = await start({
+      listProfiles: async () => [{ id: 'p-lab', label: 'lab switch' }],
+      hasLiveSession: (profileId) => profileId === 'p-lab',
+      runInterfaceStatus: async (profileId, interfaces) => {
+        seen.push({ profileId, interfaces })
+        return parsedInterfaces
+      }
+    })
+    const sessionId = await openSession(handle)
+    const result = await callTool(handle, sessionId, 'picos_get_interface_status', {
+      profile: 'p-lab'
+    })
+    expect(seen).toEqual([{ profileId: 'p-lab', interfaces: [] }])
+    expect(result.isError).toBe(false)
+    expect(result.json).toEqual({
+      profile: { id: 'p-lab', label: 'lab switch' },
+      brief: { status: 'parsed', data: briefData },
+      optics: { status: 'parsed', data: opticsData }
+    })
+    expect(JSON.stringify(result.json)).not.toContain('brief-raw')
+    expect(JSON.stringify(result.json)).not.toContain('details')
+  })
+
+  it('requests detail only when interface names are supplied', async () => {
+    const seen: Array<readonly string[] | undefined> = []
+    const withDetail: OkInterfaceStatusRun = {
+      kind: 'ok',
+      raw: 'if-raw',
+      block: {
+        brief: parsedInterfaces.block.brief,
+        optics: parsedInterfaces.block.optics,
+        details: {
+          status: 'parsed',
+          data: {
+            rows: [
+              {
+                name: 'ge-1/1/1',
+                management: 'Enabled',
+                link: 'Down',
+                members: [],
+                unparsedLines: 0
+              }
+            ],
+            unparsedLines: 0
+          },
+          raw: 'detail-raw'
+        }
+      }
+    }
+    const { handle } = await start({
+      listProfiles: async () => [{ id: 'p-lab', label: 'lab switch' }],
+      hasLiveSession: () => true,
+      runInterfaceStatus: async (_profileId, interfaces) => {
+        seen.push(interfaces)
+        return withDetail
+      }
+    })
+    const sessionId = await openSession(handle)
+    const byString = await callTool(handle, sessionId, 'picos_get_interface_status', {
+      profile: 'p-lab',
+      interface: 'ge-1/1/1, te-1/1/1(29)'
+    })
+    const byList = await callTool(handle, sessionId, 'picos_get_interface_status', {
+      profile: 'p-lab',
+      interface: ['ge-1/1/1']
+    })
+    expect(seen).toEqual([['ge-1/1/1', 'te-1/1/1(29)'], ['ge-1/1/1']])
+    expect(byString.isError).toBe(false)
+    expect(byString.json).toMatchObject({
+      details: {
+        status: 'parsed',
+        data: {
+          rows: [{ name: 'ge-1/1/1', management: 'Enabled', link: 'Down' }]
+        }
+      }
+    })
+    expect(JSON.stringify(byList.json)).not.toContain('detail-raw')
+    const withRaw = await callTool(handle, sessionId, 'picos_get_interface_status', {
+      profile: 'p-lab',
+      interface: 'ge-1/1/1',
+      includeRaw: true
+    })
+    expect(JSON.stringify(withRaw.json)).toContain('detail-raw')
+  })
+
+  it('returns a protocol error when interface status has no active SSH Session', async () => {
+    const seen: string[] = []
+    const { handle } = await start({
+      listProfiles: async () => [{ id: 'p-lab', label: 'lab switch' }],
+      hasLiveSession: () => false,
+      runInterfaceStatus: async () => {
+        seen.push('ran')
+        return parsedInterfaces
+      }
+    })
+    const sessionId = await openSession(handle)
+    const result = await callTool(handle, sessionId, 'picos_get_interface_status', {
+      profile: 'lab switch'
+    })
+    expect(result.isError).toBe(true)
+    expect(result.text).toBe('No active SSH Session for profile lab switch.')
+    expect(seen).toEqual([])
+  })
+
+  it('returns parse-failed optics as a normal payload with raw and reason', async () => {
+    const run: InterfaceStatusRun = {
+      kind: 'ok',
+      raw: 'not optics',
+      block: {
+        brief: parsedInterfaces.block.brief,
+        optics: {
+          status: 'parse-failed',
+          raw: 'not optics',
+          reason: 'missing optics skeleton'
+        },
+        details: null
+      }
+    }
+    const { handle } = await start({
+      listProfiles: async () => [{ id: 'p-lab', label: 'lab switch' }],
+      hasLiveSession: () => true,
+      runInterfaceStatus: async () => run
+    })
+    const sessionId = await openSession(handle)
+    const result = await callTool(handle, sessionId, 'picos_get_interface_status', {
+      profile: 'p-lab'
+    })
+    expect(result.isError).toBe(false)
+    expect(result.json).toMatchObject({
+      optics: {
+        status: 'parse-failed',
+        reason: 'missing optics skeleton',
+        raw: 'not optics'
+      }
+    })
+  })
+
+  it('returns a protocol error for invalid interface names', async () => {
+    const { handle } = await start({
+      listProfiles: async () => [{ id: 'p-lab', label: 'lab switch' }],
+      hasLiveSession: () => true,
+      runInterfaceStatus: async () => ({
+        kind: 'invalid-interfaces',
+        reason: 'invalid interface name: "all"'
+      })
+    })
+    const sessionId = await openSession(handle)
+    const result = await callTool(handle, sessionId, 'picos_get_interface_status', {
+      profile: 'p-lab',
+      interface: 'all'
+    })
+    expect(result.isError).toBe(true)
+    expect(result.text).toBe('invalid interface name: "all"')
   })
 })
