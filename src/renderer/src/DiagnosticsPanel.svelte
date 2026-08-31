@@ -2,11 +2,13 @@
   import type { DeviceFactsRun } from '../../shared/picos/device-facts'
   import type { InterfaceStatusRun } from '../../shared/picos/interface-status'
   import type { L2Run } from '../../shared/picos/l2'
+  import type { L3Run } from '../../shared/picos/l3'
   import {
     diagnosticBlockTabs,
     deviceFactsPanelView,
     interfaceStatusPanelView,
     l2PanelView,
+    l3PanelView,
     type DiagnosticBlockId
   } from '../../shared/picos/diagnostics-panel'
   import type { ProfileSessionUi } from '../../shared/ssh-session-ui'
@@ -26,17 +28,21 @@
   let deviceFactsLoading = $state(false)
   let interfaceStatusLoading = $state(false)
   let l2Loading = $state(false)
+  let l3Loading = $state(false)
   let deviceFactsRun = $state<DeviceFactsRun | null>(null)
   let interfaceStatusRun = $state<InterfaceStatusRun | null>(null)
   let l2Run = $state<L2Run | null>(null)
+  let l3Run = $state<L3Run | null>(null)
   let loadedDeviceFactsSessionId = $state<string | null>(null)
   let loadedInterfaceStatusKey = $state<string | null>(null)
   let loadedL2SessionId = $state<string | null>(null)
+  let loadedL3SessionId = $state<string | null>(null)
   let selectedNames = $state<string[]>([])
   let requestedDetailNames = $state<string[]>([])
   let deviceFactsRequest = 0
   let interfaceStatusRequest = 0
   let l2Request = 0
+  let l3Request = 0
   let interfaceStatusLoadingKey = $state<string | null>(null)
 
   const connected = $derived(session.state === 'connected' && session.sessionId !== null)
@@ -47,12 +53,15 @@
     interfaceStatusRun === null ? null : interfaceStatusPanelView(interfaceStatusRun)
   )
   const l2View = $derived(l2Run === null ? null : l2PanelView(l2Run))
+  const l3View = $derived(l3Run === null ? null : l3PanelView(l3Run))
   const loading = $derived(
     selectedBlock === 'interface-status'
       ? interfaceStatusLoading
       : selectedBlock === 'l2'
         ? l2Loading
-        : deviceFactsLoading
+        : selectedBlock === 'l3'
+          ? l3Loading
+          : deviceFactsLoading
   )
 
   function namesKey(names: string[]): string {
@@ -109,6 +118,23 @@
     } finally {
       if (seq === l2Request) {
         l2Loading = false
+      }
+    }
+  }
+
+  async function loadL3(sessionId: string): Promise<void> {
+    const seq = ++l3Request
+    l3Loading = true
+    try {
+      const next = await window.api.diagnostics.runL3(profileId)
+      if (seq !== l3Request) {
+        return
+      }
+      l3Run = next
+      loadedL3SessionId = sessionId
+    } finally {
+      if (seq === l3Request) {
+        l3Loading = false
       }
     }
   }
@@ -184,6 +210,28 @@
     void loadL2(sessionId)
   })
 
+  $effect(() => {
+    const sessionId = session.sessionId
+    const state = session.state
+    if (state !== 'connected' || sessionId === null) {
+      if (l3Loading) {
+        l3Request += 1
+        l3Loading = false
+      }
+      loadedL3SessionId = null
+      l3Run = null
+      return
+    }
+    if (collapsed || selectedBlock !== 'l3') {
+      return
+    }
+    if (loadedL3SessionId === sessionId || l3Loading) {
+      return
+    }
+    l3Run = null
+    void loadL3(sessionId)
+  })
+
   function refresh(): void {
     if (session.sessionId === null || session.state !== 'connected') {
       return
@@ -196,6 +244,11 @@
     if (selectedBlock === 'l2') {
       loadedL2SessionId = null
       void loadL2(session.sessionId)
+      return
+    }
+    if (selectedBlock === 'l3') {
+      loadedL3SessionId = null
+      void loadL3(session.sessionId)
       return
     }
     loadedDeviceFactsSessionId = null
@@ -740,6 +793,218 @@
             </table>
           {/if}
         {/if}
+      {:else if selectedBlock === 'l3' && (l3View === null || l3View.status === 'need-session')}
+        <p>{l3View === null ? 'Loading…' : l3View.message}</p>
+      {:else if selectedBlock === 'l3' && l3View !== null && l3View.status === 'channel-failed'}
+        <div class="notice channel" role="alert">
+          <p>{l3View.message}</p>
+          {#if l3View.stderrHead.length > 0}
+            <pre>{l3View.stderrHead}</pre>
+          {/if}
+        </div>
+        <button type="button" onclick={refresh}>Refresh</button>
+      {:else if selectedBlock === 'l3' && l3View !== null && l3View.status === 'ready'}
+        <div class="toolbar">
+          <button type="button" onclick={refresh} disabled={loading}>Refresh</button>
+          <button type="button" aria-pressed={showRaw} onclick={() => (showRaw = !showRaw)}>
+            {l3View.viewRawLabel}
+          </button>
+        </div>
+        {#if l3View.parseFailed}
+          <div class="notice parse" role="status">
+            <p>{l3View.parseFailedNotice}</p>
+          </div>
+        {/if}
+        {#if showRaw || l3View.parseFailed}
+          <pre class="raw">{l3View.raw}</pre>
+        {/if}
+        {#if !showRaw}
+          <div class="compare">
+            <section class="compare-pane">
+              <h3>Software routes</h3>
+              {#if l3View.softwareRoutesFailure}
+                <div class="notice parse" role="status">
+                  <p>{l3View.softwareRoutesFailure.reason}</p>
+                  <pre class="raw">{l3View.softwareRoutesFailure.raw}</pre>
+                </div>
+              {:else if l3View.emptySoftwareRoutesNotice}
+                <p class="muted">{l3View.emptySoftwareRoutesNotice}</p>
+              {:else if l3View.softwareRoutes !== null}
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Proto</th>
+                      <th>Flags</th>
+                      <th>Destination</th>
+                      <th>Pref/Metric</th>
+                      <th>Nexthop</th>
+                      <th>Interface</th>
+                      <th>Age</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {#each l3View.softwareRoutes as row, index (`${row.protocol}:${row.destination}:${index}`)}
+                      <tr>
+                        <td>{row.protocol}</td>
+                        <td>{row.flags}</td>
+                        <td>{row.destination}</td>
+                        <td>{row.prefMetric}</td>
+                        <td>{row.nexthopLabel}</td>
+                        <td>{row.interface ?? '—'}</td>
+                        <td>{row.age ?? '—'}</td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              {/if}
+            </section>
+            <section class="compare-pane">
+              <h3>Hardware routes</h3>
+              {#if l3View.hardwareRouteCount !== undefined}
+                <p class="muted">Total {l3View.hardwareRouteCount}</p>
+              {/if}
+              {#if l3View.hardwareRoutesFailure}
+                <div class="notice parse" role="status">
+                  <p>{l3View.hardwareRoutesFailure.reason}</p>
+                  <pre class="raw">{l3View.hardwareRoutesFailure.raw}</pre>
+                </div>
+              {:else if l3View.emptyHardwareRoutesNotice}
+                <p class="muted">{l3View.emptyHardwareRoutesNotice}</p>
+              {:else if l3View.hardwareRoutes !== null}
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Destination</th>
+                      <th>Next-hop MAC</th>
+                      <th>Port</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {#each l3View.hardwareRoutes as row, index (`${row.destination}:${index}`)}
+                      <tr>
+                        <td>{row.destination}</td>
+                        <td>{row.nextHopMac ?? '—'}</td>
+                        <td>{row.port ?? '—'}</td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              {/if}
+
+              <h3>Hardware hosts</h3>
+              {#if l3View.hardwareHostCount !== undefined}
+                <p class="muted">Total {l3View.hardwareHostCount}</p>
+              {/if}
+              {#if l3View.hardwareHostsFailure}
+                <div class="notice parse" role="status">
+                  <p>{l3View.hardwareHostsFailure.reason}</p>
+                  <pre class="raw">{l3View.hardwareHostsFailure.raw}</pre>
+                </div>
+              {:else if l3View.emptyHardwareHostsNotice}
+                <p class="muted">{l3View.emptyHardwareHostsNotice}</p>
+              {:else if l3View.hardwareHosts !== null}
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Address</th>
+                      <th>HW address</th>
+                      <th>Port</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {#each l3View.hardwareHosts as row, index (`${row.address}:${index}`)}
+                      <tr>
+                        <td>{row.address}</td>
+                        <td>{row.hwAddress ?? '—'}</td>
+                        <td>{row.port ?? '—'}</td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              {/if}
+            </section>
+          </div>
+
+          <h3>ARP</h3>
+          {#if l3View.arpAgingTime !== undefined || l3View.arpTotalCount !== undefined}
+            <p class="muted">
+              {#if l3View.arpAgingTime !== undefined}Aging {l3View.arpAgingTime}s{/if}
+              {#if l3View.arpTotalCount !== undefined}
+                · total {l3View.arpTotalCount}{/if}
+            </p>
+          {/if}
+          {#if l3View.arpFailure}
+            <div class="notice parse" role="status">
+              <p>{l3View.arpFailure.reason}</p>
+              <pre class="raw">{l3View.arpFailure.raw}</pre>
+            </div>
+          {:else if l3View.emptyArpNotice}
+            <p class="muted">{l3View.emptyArpNotice}</p>
+          {:else if l3View.arp !== null}
+            <table>
+              <thead>
+                <tr>
+                  <th>Address</th>
+                  <th>HW address</th>
+                  <th>Type</th>
+                  <th>Interface</th>
+                  <th>Age</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each l3View.arp as row, index (`${row.address ?? ''}:${row.hwAddress ?? ''}:${index}`)}
+                  <tr>
+                    <td>{row.address ?? '—'}</td>
+                    <td>{row.hwAddress ?? '—'}</td>
+                    <td>{row.type ?? '—'}</td>
+                    <td>{row.interface ?? '—'}</td>
+                    <td>{row.age ?? '—'}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          {/if}
+
+          <h3>IPv6 neighbors</h3>
+          {#if l3View.neighborAgingTime !== undefined || l3View.neighborTotalCount !== undefined}
+            <p class="muted">
+              {#if l3View.neighborAgingTime !== undefined}Aging {l3View.neighborAgingTime}s{/if}
+              {#if l3View.neighborTotalCount !== undefined}
+                · total {l3View.neighborTotalCount}{/if}
+            </p>
+          {/if}
+          {#if l3View.neighborsFailure}
+            <div class="notice parse" role="status">
+              <p>{l3View.neighborsFailure.reason}</p>
+              <pre class="raw">{l3View.neighborsFailure.raw}</pre>
+            </div>
+          {:else if l3View.emptyNeighborsNotice}
+            <p class="muted">{l3View.emptyNeighborsNotice}</p>
+          {:else if l3View.neighbors !== null}
+            <table>
+              <thead>
+                <tr>
+                  <th>Address</th>
+                  <th>HW address</th>
+                  <th>Type</th>
+                  <th>Interface</th>
+                  <th>Age</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each l3View.neighbors as row, index (`${row.address ?? ''}:${row.hwAddress ?? ''}:${index}`)}
+                  <tr>
+                    <td>{row.address ?? '—'}</td>
+                    <td>{row.hwAddress ?? '—'}</td>
+                    <td>{row.type ?? '—'}</td>
+                    <td>{row.interface ?? '—'}</td>
+                    <td>{row.age ?? '—'}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          {/if}
+        {/if}
       {/if}
     </div>
   {/if}
@@ -818,6 +1083,19 @@
   .toolbar {
     display: flex;
     gap: 8px;
+  }
+
+  .compare {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 12px;
+    align-items: start;
+  }
+
+  .compare-pane {
+    display: grid;
+    gap: 12px;
+    min-width: 0;
   }
 
   .notice {

@@ -3,6 +3,7 @@ import type { McpConfigResult } from './mcp-config'
 import type { DeviceFactsRun } from './picos/device-facts'
 import type { InterfaceStatusRun } from './picos/interface-status'
 import type { L2Run } from './picos/l2'
+import type { L3Run } from './picos/l3'
 import type {
   CreateProfileInput,
   CreateProfileResult,
@@ -114,6 +115,7 @@ export type RendererApi = {
     runDeviceFacts: (profileId: string) => Promise<DeviceFactsRun>
     runInterfaceStatus: (profileId: string, interfaces?: string[]) => Promise<InterfaceStatusRun>
     runL2: (profileId: string) => Promise<L2Run>
+    runL3: (profileId: string) => Promise<L3Run>
   }
   mcp: {
     getConfig: () => Promise<McpConfigResult>

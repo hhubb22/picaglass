@@ -8,11 +8,13 @@ import { MCP_ENDPOINT_FILE } from '../../shared/mcp-config'
 import type { DeviceFactsRun } from '../../shared/picos/device-facts'
 import type { InterfaceStatusRun } from '../../shared/picos/interface-status'
 import type { L2Run } from '../../shared/picos/l2'
+import type { L3Run } from '../../shared/picos/l3'
 import { createMcpServer, type McpServerHandle } from './create-mcp-server'
 
 type OkDeviceFactsRun = Extract<DeviceFactsRun, { kind: 'ok' }>
 type OkInterfaceStatusRun = Extract<InterfaceStatusRun, { kind: 'ok' }>
 type OkL2Run = Extract<L2Run, { kind: 'ok' }>
+type OkL3Run = Extract<L3Run, { kind: 'ok' }>
 
 const TOKEN = 'b'.repeat(64)
 const STARTED_AT = '2026-08-31T00:00:00.000Z'
@@ -108,6 +110,57 @@ const parsedL2: OkL2Run = {
     vlans: { status: 'parsed', data: vlanData, raw: 'vlan-raw' },
     fdb: { status: 'parsed', data: fdbData, raw: 'fdb-raw' },
     switching: { status: 'parsed', data: switchingData, raw: 'sw-raw' }
+  }
+}
+
+const softwareRouteData = {
+  rows: [
+    {
+      protocol: 'K',
+      selected: true,
+      fib: true,
+      destination: '0.0.0.0/0',
+      nexthop: '192.0.2.5',
+      interface: 'eth0'
+    }
+  ],
+  unparsedLines: 0
+}
+
+const hardwareRouteData = {
+  totalRouteCount: '1',
+  rows: [
+    {
+      destination: '0.0.0.0/0',
+      nextHopMac: '02:00:00:00:00:01',
+      port: 'connected'
+    }
+  ],
+  unparsedLines: 0
+}
+
+const hardwareHostData = {
+  totalHostCount: '0',
+  rows: [] as Array<{ address: string }>,
+  unparsedLines: 0
+}
+
+const arpData = {
+  agingTime: '1200',
+  totalCount: '0',
+  rows: [] as Array<{ address?: string }>,
+  unparsedLines: 0
+}
+
+const parsedL3: OkL3Run = {
+  kind: 'ok',
+  raw: 'l3-raw',
+  block: {
+    softwareRoutes: { status: 'parsed', data: softwareRouteData, raw: 'soft-raw' },
+    hardwareRoutes: { status: 'parsed', data: hardwareRouteData, raw: 'hard-raw' },
+    hardwareHosts: { status: 'parsed', data: hardwareHostData, raw: 'host-raw' },
+    arp: { status: 'parsed', data: arpData, raw: 'arp-raw' },
+    neighbors: { status: 'parsed', data: arpData, raw: 'neigh-raw' }
   }
 }
 
@@ -275,6 +328,7 @@ describe('embedded MCP server', () => {
       interfaces?: readonly string[]
     ) => Promise<InterfaceStatusRun>
     runL2?: (profileId: string) => Promise<L2Run>
+    runL3?: (profileId: string) => Promise<L3Run>
     createToken?: () => string
     now?: () => Date
   }): Promise<{ dir: string; handle: McpServerHandle }> {
@@ -287,6 +341,7 @@ describe('embedded MCP server', () => {
       runDeviceFacts: async () => ({ kind: 'no-session' }),
       runInterfaceStatus: async () => ({ kind: 'no-session' }),
       runL2: async () => ({ kind: 'no-session' }),
+      runL3: async () => ({ kind: 'no-session' }),
       createToken: () => TOKEN,
       now: () => new Date(STARTED_AT),
       ...overrides
@@ -788,6 +843,90 @@ describe('embedded MCP server', () => {
         status: 'parse-failed',
         reason: 'missing fdb skeleton',
         raw: 'not fdb'
+      }
+    })
+  })
+
+  it('returns structured L3 tables without raw by default, including empty ARP', async () => {
+    const seen: string[] = []
+    const { handle } = await start({
+      listProfiles: async () => [{ id: 'p-lab', label: 'lab switch' }],
+      hasLiveSession: (profileId) => profileId === 'p-lab',
+      runL3: async (profileId) => {
+        seen.push(profileId)
+        return parsedL3
+      }
+    })
+    const sessionId = await openSession(handle)
+    const result = await callTool(handle, sessionId, 'picos_get_l3_tables', { profile: 'p-lab' })
+    expect(seen).toEqual(['p-lab'])
+    expect(result.isError).toBe(false)
+    expect(result.json).toEqual({
+      profile: { id: 'p-lab', label: 'lab switch' },
+      softwareRoutes: { status: 'parsed', data: softwareRouteData },
+      hardwareRoutes: { status: 'parsed', data: hardwareRouteData },
+      hardwareHosts: { status: 'parsed', data: hardwareHostData },
+      arp: { status: 'parsed', data: arpData },
+      neighbors: { status: 'parsed', data: arpData }
+    })
+    expect(JSON.stringify(result.json)).not.toContain('soft-raw')
+    expect(JSON.stringify(result.json)).not.toContain('arp-raw')
+    const withRaw = await callTool(handle, sessionId, 'picos_get_l3_tables', {
+      profile: 'p-lab',
+      includeRaw: true
+    })
+    expect(JSON.stringify(withRaw.json)).toContain('soft-raw')
+    expect(JSON.stringify(withRaw.json)).toContain('arp-raw')
+  })
+
+  it('returns a protocol error when L3 has no active SSH Session', async () => {
+    const seen: string[] = []
+    const { handle } = await start({
+      listProfiles: async () => [{ id: 'p-lab', label: 'lab switch' }],
+      hasLiveSession: () => false,
+      runL3: async () => {
+        seen.push('ran')
+        return parsedL3
+      }
+    })
+    const sessionId = await openSession(handle)
+    const result = await callTool(handle, sessionId, 'picos_get_l3_tables', {
+      profile: 'lab switch'
+    })
+    expect(result.isError).toBe(true)
+    expect(result.text).toBe('No active SSH Session for profile lab switch.')
+    expect(seen).toEqual([])
+  })
+
+  it('returns parse-failed ARP as a normal payload with raw and reason', async () => {
+    const run: L3Run = {
+      kind: 'ok',
+      raw: 'not arp',
+      block: {
+        softwareRoutes: parsedL3.block.softwareRoutes,
+        hardwareRoutes: parsedL3.block.hardwareRoutes,
+        hardwareHosts: parsedL3.block.hardwareHosts,
+        arp: {
+          status: 'parse-failed',
+          raw: 'not arp',
+          reason: 'missing arp skeleton'
+        },
+        neighbors: parsedL3.block.neighbors
+      }
+    }
+    const { handle } = await start({
+      listProfiles: async () => [{ id: 'p-lab', label: 'lab switch' }],
+      hasLiveSession: () => true,
+      runL3: async () => run
+    })
+    const sessionId = await openSession(handle)
+    const result = await callTool(handle, sessionId, 'picos_get_l3_tables', { profile: 'p-lab' })
+    expect(result.isError).toBe(false)
+    expect(result.json).toMatchObject({
+      arp: {
+        status: 'parse-failed',
+        reason: 'missing arp skeleton',
+        raw: 'not arp'
       }
     })
   })

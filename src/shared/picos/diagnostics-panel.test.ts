@@ -6,11 +6,13 @@ import {
   diagnosticBlockTabs,
   interfaceStatusPanelView,
   l2PanelView,
+  l3PanelView,
   needSessionMessage
 } from './diagnostics-panel'
 import type { DeviceFactsRun } from './device-facts'
 import type { InterfaceStatusRun } from './interface-status'
 import type { L2Run } from './l2'
+import type { L3Run } from './l3'
 
 const parsedRun: DeviceFactsRun = {
   kind: 'ok',
@@ -322,6 +324,118 @@ describe('l2PanelView', () => {
     expect(view.emptyFdbNotice).toBe('No FDB rows.')
     expect(view.fdbTotalEntries).toBe('0')
     expect(view.switching).toHaveLength(1)
+    expect(view.viewRawLabel).toBe(VIEW_RAW_LABEL)
+  })
+})
+
+describe('l3PanelView', () => {
+  it('shows 请先连接 when there is no active SSH Session', () => {
+    expect(l3PanelView({ kind: 'no-session' })).toEqual({
+      status: 'need-session',
+      message: needSessionMessage()
+    })
+  })
+
+  it('presents a nonzero-exit channel failure without a parse-failed notice', () => {
+    expect(
+      l3PanelView({
+        kind: 'channel-failed',
+        reason: 'nonzero-exit',
+        exitCode: 1,
+        stderrHead: "syntax error, expecting 'ipv4'"
+      })
+    ).toEqual({
+      status: 'channel-failed',
+      message: 'Command failed (exit 1)',
+      exitCode: 1,
+      stderrHead: "syntax error, expecting 'ipv4'"
+    })
+  })
+
+  it('projects software and hardware routes on one ready view, with empty ARP as data', () => {
+    const run: L3Run = {
+      kind: 'ok',
+      raw: 'combined-raw',
+      block: {
+        softwareRoutes: {
+          status: 'parsed',
+          data: {
+            rows: [
+              {
+                protocol: 'K',
+                selected: true,
+                fib: true,
+                destination: '0.0.0.0/0',
+                nexthop: '192.0.2.5',
+                interface: 'eth0'
+              }
+            ],
+            unparsedLines: 0
+          },
+          raw: 'sw-raw'
+        },
+        hardwareRoutes: {
+          status: 'parsed',
+          data: {
+            totalRouteCount: '1',
+            rows: [
+              {
+                destination: '0.0.0.0/0',
+                nextHopMac: '02:00:00:00:00:01',
+                port: 'connected'
+              }
+            ],
+            unparsedLines: 0
+          },
+          raw: 'hw-raw'
+        },
+        hardwareHosts: {
+          status: 'parsed',
+          data: { totalHostCount: '0', rows: [], unparsedLines: 0 },
+          raw: 'host-raw'
+        },
+        arp: {
+          status: 'parsed',
+          data: { agingTime: '1200', totalCount: '0', rows: [], unparsedLines: 0 },
+          raw: 'arp-raw'
+        },
+        neighbors: {
+          status: 'parsed',
+          data: { agingTime: '1200', totalCount: '0', rows: [], unparsedLines: 0 },
+          raw: 'neigh-raw'
+        }
+      }
+    }
+    const view = l3PanelView(run)
+    expect(view.status).toBe('ready')
+    if (view.status !== 'ready') {
+      return
+    }
+    expect(view.parseFailed).toBe(false)
+    expect(view.softwareRoutes).toEqual([
+      {
+        protocol: 'K',
+        selected: true,
+        fib: true,
+        destination: '0.0.0.0/0',
+        nexthop: '192.0.2.5',
+        interface: 'eth0',
+        flags: '>*',
+        prefMetric: '—',
+        nexthopLabel: '192.0.2.5'
+      }
+    ])
+    expect(view.hardwareRoutes).toEqual([
+      {
+        destination: '0.0.0.0/0',
+        nextHopMac: '02:00:00:00:00:01',
+        port: 'connected'
+      }
+    ])
+    expect(view.arp).toEqual([])
+    expect(view.emptyArpNotice).toBe('No ARP rows.')
+    expect(view.emptyNeighborsNotice).toBe('No neighbor rows.')
+    expect(view.hardwareRouteCount).toBe('1')
     expect(view.viewRawLabel).toBe(VIEW_RAW_LABEL)
   })
 })

@@ -26,6 +26,7 @@ import type {
   InterfaceStatusRun
 } from '../../shared/picos/interface-status'
 import type { L2ChannelFailure, L2Run } from '../../shared/picos/l2'
+import type { L3ChannelFailure, L3Run } from '../../shared/picos/l3'
 
 export type McpProfileListing = {
   id: string
@@ -42,6 +43,7 @@ export type CreateMcpServerDeps = {
     interfaces?: readonly string[]
   ) => Promise<InterfaceStatusRun>
   runL2: (profileId: string) => Promise<L2Run>
+  runL3: (profileId: string) => Promise<L3Run>
   now?: () => Date
   createToken?: () => string
 }
@@ -195,7 +197,8 @@ function projectResult<T>(result: ParsedResult<T>, includeRaw: boolean): unknown
 }
 
 function channelErrorText(
-  run: DeviceFactsChannelFailure | InterfaceStatusChannelFailure | L2ChannelFailure
+  run:
+    DeviceFactsChannelFailure | InterfaceStatusChannelFailure | L2ChannelFailure | L3ChannelFailure
 ): string {
   let message = 'Command failed.'
   if (run.reason === 'timeout') {
@@ -400,6 +403,49 @@ function registerTools(server: McpServer, deps: CreateMcpServerDeps): void {
         vlans: projectResult(run.block.vlans, withRaw),
         fdb: projectResult(run.block.fdb, withRaw),
         switching: projectResult(run.block.switching, withRaw)
+      })
+    }
+  )
+
+  server.registerTool(
+    'picos_get_l3_tables',
+    {
+      title: 'Get L3 tables',
+      description:
+        'Get the L3 Diagnostic Block for a Connection Profile that has an active SSH Session: software routing table and hardware forwarding/host tables side by side, plus ARP and IPv6 neighbor tables. Empty ARP/neighbor tables are successful zero-row results.',
+      inputSchema: {
+        profile: z.string().min(1).describe('Connection Profile id or Profile Label'),
+        includeRaw: z
+          .boolean()
+          .optional()
+          .describe('When true, include raw command text for parsed results')
+      },
+      annotations: READ_ONLY
+    },
+    async ({ profile, includeRaw }) => {
+      const profiles = await deps.listProfiles()
+      const resolved = resolveProfile(profiles, profile)
+      if (!resolved.ok) {
+        return mcpToolError(resolved.message)
+      }
+      if (!deps.hasLiveSession(resolved.profile.id)) {
+        return noSessionError(resolved.profile.label)
+      }
+      const run = await deps.runL3(resolved.profile.id)
+      if (run.kind === 'no-session') {
+        return noSessionError(resolved.profile.label)
+      }
+      if (run.kind === 'channel-failed') {
+        return mcpToolError(channelErrorText(run))
+      }
+      const withRaw = includeRaw === true
+      return mcpText({
+        profile: { id: resolved.profile.id, label: resolved.profile.label },
+        softwareRoutes: projectResult(run.block.softwareRoutes, withRaw),
+        hardwareRoutes: projectResult(run.block.hardwareRoutes, withRaw),
+        hardwareHosts: projectResult(run.block.hardwareHosts, withRaw),
+        arp: projectResult(run.block.arp, withRaw),
+        neighbors: projectResult(run.block.neighbors, withRaw)
       })
     }
   )

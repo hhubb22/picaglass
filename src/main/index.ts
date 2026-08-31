@@ -136,7 +136,8 @@ app.whenReady().then(async () => {
       runDeviceFacts: (profileId) => diagnosticsApi.runDeviceFacts(profileId),
       runInterfaceStatus: (profileId, interfaces) =>
         diagnosticsApi.runInterfaceStatus(profileId, interfaces),
-      runL2: (profileId) => diagnosticsApi.runL2(profileId)
+      runL2: (profileId) => diagnosticsApi.runL2(profileId),
+      runL3: (profileId) => diagnosticsApi.runL3(profileId)
     })
   } catch (err) {
     console.error('Failed to start the Agent Interface', err)
