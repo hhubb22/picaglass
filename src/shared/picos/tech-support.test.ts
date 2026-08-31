@@ -15,6 +15,7 @@ import {
   isTechSupportInFlight,
   isTechSupportRemotePath,
   parseTechSupportPoll,
+  pickCurrentCollectionFile,
   pickLatestTechSupportFile,
   techSupportDeleteCommand,
   techSupportFileName,
@@ -124,6 +125,22 @@ describe('parseTechSupportPoll', () => {
     expect(techSupportFileName('/tmp/PICOS-202608310901-techSupport.log')).toBe(
       'PICOS-202608310901-techSupport.log'
     )
+  })
+
+  it('ignores unchanged historical artifacts when choosing the current collection file', () => {
+    const historical = {
+      path: '/tmp/PICOS-202608310801-techSupport.log',
+      bytes: 288_000
+    }
+    const current = {
+      path: '/tmp/PICOS-202608310901-techSupport.log',
+      bytes: 2_572_353
+    }
+    expect(pickCurrentCollectionFile([historical], [historical])).toBeUndefined()
+    expect(pickCurrentCollectionFile([historical, current], [historical])).toEqual(current)
+    expect(
+      pickCurrentCollectionFile([{ ...historical, bytes: 400_000 }], [historical])
+    ).toEqual({ path: historical.path, bytes: 400_000 })
   })
 })
 

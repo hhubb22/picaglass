@@ -24,8 +24,10 @@ import {
 import { createDiagnosticsApi, type DiagnosticsApi } from './create-diagnostics-api'
 
 const REMOTE_PATH = '/tmp/PICOS-202608310901-techSupport.log'
+const HISTORICAL_PATH = '/tmp/PICOS-202608310801-techSupport.log'
 const ARTIFACT_BYTES = 2048
 const ARTIFACT_BODY = Buffer.alloc(ARTIFACT_BYTES, 0x61)
+const HISTORICAL_BODY = Buffer.alloc(288, 0x63)
 
 function pollStdout(opts: {
   running: boolean
@@ -213,12 +215,17 @@ describe('tech_support diagnostic execution', () => {
   }
 
   function collectionExec(pollsUntilDone: number): (command: string) => TestExecResponse {
+    let started = false
     let polls = 0
     return (command) => {
       if (command === techSupportStartCommand()) {
+        started = true
         return { stdout: 'started\n' }
       }
       if (command === techSupportPollCommand()) {
+        if (!started) {
+          return { stdout: pollStdout({ running: false, files: false }) }
+        }
         polls += 1
         if (polls < pollsUntilDone) {
           return { stdout: pollStdout({ running: true, bytes: 1024 }) }
@@ -274,6 +281,10 @@ describe('tech_support diagnostic execution', () => {
       TECH_SUPPORT_STARTED_MESSAGE
     )
     expect(server?.execs()[0]).toEqual({
+      command: techSupportPollCommand(),
+      ptyRequested: false
+    })
+    expect(server?.execs()[1]).toEqual({
       command: techSupportStartCommand(),
       ptyRequested: false
     })
@@ -316,6 +327,9 @@ describe('tech_support diagnostic execution', () => {
   it('fails starting when the detached launch command exits nonzero', async () => {
     const emits: CapturedEmit[] = []
     const { profiles, ssh, diagnostics } = await wired(emits, (command) => {
+      if (command === techSupportPollCommand()) {
+        return { stdout: pollStdout({ running: false, files: false }) }
+      }
       if (command === techSupportStartCommand()) {
         return { stdout: '', stderr: 'nohup: failed\n', exitCode: 1 }
       }
@@ -356,7 +370,7 @@ describe('tech_support diagnostic execution', () => {
     const snapshot = diagnostics.getTechSupport(profileId)
     expect(snapshot.failure).toEqual({
       stage: 'collecting',
-      message: '采集进程已退出，但未发现产物文件'
+      message: '采集进程已退出，但未发现本次采集的产物文件'
     })
     expect(snapshot.lastProcessRunning).toBe(false)
     expect(snapshot.artifact).toBeNull()
@@ -366,15 +380,22 @@ describe('tech_support diagnostic execution', () => {
     const emits: CapturedEmit[] = []
     const { profiles, ssh, diagnostics } = await wired(
       emits,
-      (command) => {
-        if (command === techSupportStartCommand()) {
-          return { stdout: 'started\n' }
+      (() => {
+        let started = false
+        return (command: string) => {
+          if (command === techSupportStartCommand()) {
+            started = true
+            return { stdout: 'started\n' }
+          }
+          if (command === techSupportPollCommand()) {
+            if (!started) {
+              return { stdout: pollStdout({ running: false, files: false }) }
+            }
+            return { stdout: pollStdout({ running: true, bytes: 512 }) }
+          }
+          return { stdout: '', exitCode: 1 }
         }
-        if (command === techSupportPollCommand()) {
-          return { stdout: pollStdout({ running: true, bytes: 512 }) }
-        }
-        return { stdout: '', exitCode: 1 }
-      },
+      })(),
       { pollIntervalMs: 20, collectTimeoutMs: 80 }
     )
     const sender: SshSender = { id: 1 }
@@ -429,14 +450,19 @@ describe('tech_support diagnostic execution', () => {
 
   it('keeps the local artifact when remote cleanup fails', async () => {
     const emits: CapturedEmit[] = []
+    let started = false
     let polls = 0
     const { profiles, ssh, diagnostics, dir } = await wired(
       emits,
       (command) => {
         if (command === techSupportStartCommand()) {
+          started = true
           return { stdout: 'started\n' }
         }
         if (command === techSupportPollCommand()) {
+          if (!started) {
+            return { stdout: pollStdout({ running: false, files: false }) }
+          }
           polls += 1
           return { stdout: pollStdout({ running: false, bytes: ARTIFACT_BYTES }) }
         }
@@ -471,14 +497,19 @@ describe('tech_support diagnostic execution', () => {
 
   it('resumes polling after the SSH Session disconnects (断开续查)', async () => {
     const emits: CapturedEmit[] = []
+    let started = false
     let polls = 0
     const { profiles, ssh, diagnostics, dir } = await wired(
       emits,
       (command) => {
         if (command === techSupportStartCommand()) {
+          started = true
           return { stdout: 'started\n' }
         }
         if (command === techSupportPollCommand()) {
+          if (!started) {
+            return { stdout: pollStdout({ running: false, files: false }) }
+          }
           polls += 1
           if (polls === 1) {
             return { stdout: pollStdout({ running: true, bytes: 1024 }) }
@@ -548,18 +579,24 @@ describe('tech_support diagnostic execution', () => {
   it('starts a new collection from a finished task', async () => {
     const emits: CapturedEmit[] = []
     let starts = 0
+    let awaitingStart = true
     const { profiles, ssh, diagnostics } = await wired(
       emits,
       (command) => {
         if (command === techSupportStartCommand()) {
           starts += 1
+          awaitingStart = false
           return { stdout: 'started\n' }
         }
         if (command === techSupportPollCommand()) {
+          if (awaitingStart) {
+            return { stdout: pollStdout({ running: false, files: false }) }
+          }
           return { stdout: pollStdout({ running: false, bytes: ARTIFACT_BYTES }) }
         }
         const del = techSupportDeleteCommand(REMOTE_PATH)
         if (del.ok && command === del.command) {
+          awaitingStart = true
           return { stdout: '' }
         }
         return { stdout: '', exitCode: 1 }
@@ -596,6 +633,9 @@ describe('tech_support diagnostic execution', () => {
       if (command === techSupportPollCommand()) {
         polls += 1
         if (polls === 1) {
+          return { stdout: pollStdout({ running: false, files: false }) }
+        }
+        if (polls === 2) {
           return { stdout: pollStdout({ running: true, bytes: 512 }) }
         }
         return { stdout: '', stderr: 'ps: error\n', exitCode: 1 }
@@ -634,5 +674,108 @@ describe('tech_support diagnostic execution', () => {
       reason: 'no-artifact',
       message: 'no local artifact'
     })
+  })
+
+  it('fails collecting when the process exits without a new artifact, leaving a historical file alone', async () => {
+    const emits: CapturedEmit[] = []
+    const historicalDelete = techSupportDeleteCommand(HISTORICAL_PATH)
+    const { profiles, ssh, diagnostics } = await wired(
+      emits,
+      (command) => {
+        if (command === techSupportStartCommand()) {
+          return { stdout: 'started\n' }
+        }
+        if (command === techSupportPollCommand()) {
+          return {
+            stdout: pollStdout({
+              running: false,
+              path: HISTORICAL_PATH,
+              bytes: HISTORICAL_BODY.length
+            })
+          }
+        }
+        if (historicalDelete.ok && command === historicalDelete.command) {
+          return { stdout: '' }
+        }
+        return { stdout: '', exitCode: 1 }
+      },
+      { sftp: { [HISTORICAL_PATH]: HISTORICAL_BODY } }
+    )
+    const sender: SshSender = { id: 1 }
+    const { profileId } = await saveAndOpen(profiles, ssh, sender)
+
+    await diagnostics.startTechSupport(profileId)
+    await waitForPhase(diagnostics, profileId, 'failed')
+    const snapshot = diagnostics.getTechSupport(profileId)
+    expect(snapshot.failure).toEqual({
+      stage: 'collecting',
+      message: '采集进程已退出，但未发现本次采集的产物文件'
+    })
+    expect(snapshot.artifact).toBeNull()
+    expect(snapshot.lastRemotePath).toBeNull()
+    expect(server?.execs().some((entry) => entry.command.includes(HISTORICAL_PATH))).toBe(false)
+  })
+
+  it('pulls and deletes only the file created after start when a historical artifact remains', async () => {
+    const emits: CapturedEmit[] = []
+    let started = false
+    const historicalDelete = techSupportDeleteCommand(HISTORICAL_PATH)
+    const { profiles, ssh, diagnostics, dir } = await wired(
+      emits,
+      (command) => {
+        if (command === techSupportStartCommand()) {
+          started = true
+          return { stdout: 'started\n' }
+        }
+        if (command === techSupportPollCommand()) {
+          if (!started) {
+            return {
+              stdout: pollStdout({
+                running: false,
+                path: HISTORICAL_PATH,
+                bytes: HISTORICAL_BODY.length
+              })
+            }
+          }
+          return {
+            stdout: [
+              pollStdout({ running: false, bytes: ARTIFACT_BYTES }),
+              `-rw-r--r-- 1 root xorp ${HISTORICAL_BODY.length} Aug 31 08:01 ${HISTORICAL_PATH}`
+            ].join('\n')
+          }
+        }
+        const del = techSupportDeleteCommand(REMOTE_PATH)
+        if (del.ok && command === del.command) {
+          return { stdout: '' }
+        }
+        if (historicalDelete.ok && command === historicalDelete.command) {
+          return { stdout: '' }
+        }
+        return { stdout: '', exitCode: 1 }
+      },
+      {
+        sftp: {
+          [REMOTE_PATH]: ARTIFACT_BODY,
+          [HISTORICAL_PATH]: HISTORICAL_BODY
+        }
+      }
+    )
+    const sender: SshSender = { id: 1 }
+    const { profileId } = await saveAndOpen(profiles, ssh, sender)
+
+    await diagnostics.startTechSupport(profileId)
+    await waitForPhase(diagnostics, profileId, 'done')
+    const snapshot = diagnostics.getTechSupport(profileId)
+    expect(snapshot.artifact?.remotePath).toBe(REMOTE_PATH)
+    expect(snapshot.artifact?.localPath).toBe(
+      join(dir, 'tech-support', profileId, 'PICOS-202608310901-techSupport.log')
+    )
+    expect(snapshot.artifact?.remoteDeleted).toBe(true)
+    const currentDelete = techSupportDeleteCommand(REMOTE_PATH)
+    expect(currentDelete.ok).toBe(true)
+    if (currentDelete.ok) {
+      expect(server?.execs().map((entry) => entry.command)).toContain(currentDelete.command)
+    }
+    expect(server?.execs().some((entry) => entry.command.includes(HISTORICAL_PATH))).toBe(false)
   })
 })

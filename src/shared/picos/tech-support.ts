@@ -20,6 +20,8 @@ export const TECH_SUPPORT_PROCESS_EXITED_MESSAGE = '采集进程已退出'
 export const TECH_SUPPORT_TRANSFERRING_MESSAGE = '正在拉取产物'
 export const TECH_SUPPORT_CLEANUP_FAILED_MESSAGE = '设备侧副本清理失败'
 export const TECH_SUPPORT_REMOTE_DELETED_MESSAGE = '已删除设备侧副本'
+export const TECH_SUPPORT_NO_CURRENT_ARTIFACT_MESSAGE =
+  '采集进程已退出，但未发现本次采集的产物文件'
 
 export const TECH_SUPPORT_PHASES = [
   'idle',
@@ -185,6 +187,23 @@ export function pickLatestTechSupportFile(
     }
     return best
   })
+}
+
+function belongsToCurrentCollection(
+  file: TechSupportPollFile,
+  baseline: readonly TechSupportPollFile[]
+): boolean {
+  const prior = baseline.find((entry) => entry.path === file.path)
+  return prior === undefined || file.bytes > prior.bytes
+}
+
+export function pickCurrentCollectionFile(
+  files: readonly TechSupportPollFile[],
+  baseline: readonly TechSupportPollFile[]
+): TechSupportPollFile | undefined {
+  return pickLatestTechSupportFile(
+    files.filter((file) => belongsToCurrentCollection(file, baseline))
+  )
 }
 
 export function techSupportFileName(remotePath: string): string {
