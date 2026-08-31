@@ -25,6 +25,7 @@ import {
 import {
   TECH_SUPPORT_CLEANUP_FAILED_MESSAGE,
   TECH_SUPPORT_COLLECT_TIMEOUT_MS,
+  TECH_SUPPORT_NO_CURRENT_ARTIFACT_MESSAGE,
   TECH_SUPPORT_POLL_INTERVAL_MS,
   TECH_SUPPORT_REMOTE_DELETED_MESSAGE,
   TECH_SUPPORT_STARTED_MESSAGE,
@@ -33,7 +34,7 @@ import {
   idleTechSupportSnapshot,
   isTechSupportInFlight,
   parseTechSupportPoll,
-  pickLatestTechSupportFile,
+  pickCurrentCollectionFile,
   techSupportDeleteCommand,
   techSupportFileName,
   techSupportPollCommand,
@@ -171,6 +172,7 @@ function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
 type TechSupportTask = {
   snapshot: TechSupportSnapshot
   abort: AbortController
+  baselineFiles: TechSupportPollFile[]
 }
 
 export function createDiagnosticsApi(deps: CreateDiagnosticsApiDeps): DiagnosticsApi {
@@ -319,14 +321,14 @@ export function createDiagnosticsApi(deps: CreateDiagnosticsApiDeps): Diagnostic
         return
       }
       const reading = parseTechSupportPoll(captured.stdout)
-      const latest = pickLatestTechSupportFile(reading.files)
-      recordPoll(task, latest, reading.processRunning)
+      const current = pickCurrentCollectionFile(reading.files, task.baselineFiles)
+      recordPoll(task, current, reading.processRunning)
       if (!reading.processRunning) {
-        if (latest === undefined) {
-          failTask(task, 'collecting', '采集进程已退出，但未发现产物文件')
+        if (current === undefined) {
+          failTask(task, 'collecting', TECH_SUPPORT_NO_CURRENT_ARTIFACT_MESSAGE)
           return
         }
-        await transferArtifact(task, profileId, latest)
+        await transferArtifact(task, profileId, current)
         return
       }
       await sleep(pollIntervalMs, task.abort.signal)
@@ -349,9 +351,19 @@ export function createDiagnosticsApi(deps: CreateDiagnosticsApiDeps): Diagnostic
         taskId: deps.createTaskId?.() ?? randomUUID(),
         phase: 'starting'
       },
-      abort: new AbortController()
+      abort: new AbortController(),
+      baselineFiles: []
     }
     tasks.set(id, task)
+    const baselineCaptured = await deps.exec(id, techSupportPollCommand())
+    if (!stillCurrent(task, id)) {
+      return { kind: 'ok', snapshot: currentSnapshot(id) }
+    }
+    if (!baselineCaptured.ok) {
+      failTask(task, 'starting', execFailureMessage(baselineCaptured))
+      return { kind: 'ok', snapshot: cloneSnapshot(task.snapshot) }
+    }
+    task.baselineFiles = parseTechSupportPoll(baselineCaptured.stdout).files
     const captured = await deps.exec(id, techSupportStartCommand())
     if (!stillCurrent(task, id)) {
       return { kind: 'ok', snapshot: currentSnapshot(id) }
