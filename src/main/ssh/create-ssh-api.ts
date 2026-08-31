@@ -855,7 +855,7 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
       }
       if (action === 'abort') {
         dropSession(sessionId)
-        return invalid('aborted')
+        return { ok: false, reason: 'canceled', message: 'canceled' }
       }
       if (session.verify === undefined || session.confirming) {
         return invalid('unknown session')

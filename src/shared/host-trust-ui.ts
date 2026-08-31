@@ -39,7 +39,7 @@ export function hostTrustCard(state: HostTrustState): HostTrustCard {
     statusLabel: HOST_TRUST_STATUS_LABEL[state.status],
     algorithm: state.algorithm,
     fingerprint: state.fingerprint,
-    canForget: true
+    canForget: state.status === 'remembered'
   }
 }
 
@@ -115,5 +115,5 @@ export function replaceConfirmCopy(destination: string): string {
 }
 
 export function forgetConfirmCopy(destination: string): string {
-  return `Forget the trusted host key for ${destination}? Every Connection Profile that uses this destination will verify the host key on the next connection. Live SSH Sessions stay connected.`
+  return `Forget the trusted host key for ${destination}? Every Connection Profile that uses this destination will verify the Trusted Host Key on the next SSH Session. Live SSH Sessions stay connected.`
 }

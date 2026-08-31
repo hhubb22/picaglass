@@ -266,6 +266,55 @@ describe('createSshApi host trust', () => {
     })
   })
 
+  it('aborting a changed host key leaves a live sibling session running', async () => {
+    userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-trust-'))
+    const firstHostKey = generateHostKey(userDataPath, 'host-a')
+    const otherHostKey = generateHostKey(userDataPath, 'host-b')
+    server = await startServer(firstHostKey.pem)
+    const emits: CapturedEmit[] = []
+    api = testApi(userDataPath, undefined, emits)
+
+    const firstUnknown = await connectProfile(PROFILE_A)
+    if (firstUnknown.ok || firstUnknown.reason !== 'host-unknown') {
+      throw new Error('expected host-unknown')
+    }
+    const liveA = await api.confirmHostKey(firstUnknown.sessionId, 'trust-always', owner)
+    if (!liveA.ok) {
+      throw new Error('expected profile A live')
+    }
+    const pub = readFileSync(join(userDataPath, 'host-b.pub'), 'utf8').trim().split(/\s+/)
+    const alg = pub[0]
+    const b64 = pub[1]
+    if (alg === undefined || b64 === undefined) {
+      throw new Error('expected a public host key')
+    }
+    writeFileSync(
+      join(userDataPath, 'ssh', 'known_hosts'),
+      `[127.0.0.1]:${server.port} ${alg} ${b64}\n`
+    )
+
+    const changed = await connectProfile(PROFILE_B)
+    if (changed.ok || changed.reason !== 'host-changed') {
+      throw new Error('expected host-changed')
+    }
+    const aborted = await api.confirmHostKey(changed.sessionId, 'abort', owner)
+    expect(aborted).toEqual({ ok: false, reason: 'canceled', message: 'canceled' })
+    await expect(api.hostTrust('127.0.0.1', server.port)).resolves.toEqual({
+      status: 'remembered',
+      algorithm: 'ssh-ed25519',
+      fingerprint: otherHostKey.fingerprint
+    })
+
+    const probe = Uint8Array.from([0x44, 0x34])
+    api.write(liveA.sessionId, probe, owner)
+    await waitForServerBytes(server, probe)
+    await vi.waitFor(() => {
+      if (!emitsHaveChunk(emits, probe)) {
+        throw new Error('live session did not echo after aborting replace')
+      }
+    })
+  })
+
   it('replace updates shared trust for future connections and leaves a live session running', async () => {
     userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-trust-'))
     const firstHostKey = generateHostKey(userDataPath, 'host-a')

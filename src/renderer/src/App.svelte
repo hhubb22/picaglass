@@ -556,6 +556,12 @@
         workspace = result.workspace
         resetDraft()
         pane = 'profile'
+        const created = result.workspace.profiles.find(
+          (profile) => profile.id === result.workspace.selectedProfileId
+        )
+        if (created !== undefined) {
+          await refreshHostTrust(created.host, created.port)
+        }
         return
       }
       workspace = result.workspace
@@ -814,7 +820,9 @@
     title="Replace trusted host key?"
     confirmLabel={HOST_TRUST_ACTION_LABEL.replace}
     onConfirm={() => void decideHost(selected.id, 'replace')}
-    onCancel={() => void abortHost(selected.id)}
+    onCancel={() => {
+      replaceConfirm = false
+    }}
   >
     <p>{replaceConfirmCopy(prompt.destination)}</p>
   </AppDialog>

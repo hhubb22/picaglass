@@ -216,12 +216,14 @@ export function applyConnectResult(
       error: 'Authentication failed.'
     }
   }
-  const lastOutcome =
-    result.reason === 'timeout'
-      ? 'timed out'
-      : result.reason === 'canceled'
-        ? 'canceled'
-        : 'network failed'
+  if (result.reason === 'canceled') {
+    return {
+      ...emptyProfileSession(),
+      lastOutcome: 'canceled',
+      error: null
+    }
+  }
+  const lastOutcome = result.reason === 'timeout' ? 'timed out' : 'network failed'
   return {
     ...emptyProfileSession(),
     lastOutcome,

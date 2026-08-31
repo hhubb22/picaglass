@@ -192,8 +192,8 @@ describe('createSshApi handshake', () => {
 
     expect(rejected).toEqual({
       ok: false,
-      reason: 'invalid',
-      message: 'aborted'
+      reason: 'canceled',
+      message: 'canceled'
     })
     expect(server.shellOpened()).toBe(false)
     expect(() => readFileSync(join(userDataPath!, 'ssh', 'known_hosts'))).toThrow()

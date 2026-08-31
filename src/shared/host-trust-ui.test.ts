@@ -34,7 +34,7 @@ describe('Host Trust card', () => {
       statusLabel: 'Trusted for this session',
       algorithm: 'ssh-ed25519',
       fingerprint: 'SHA256:abc',
-      canForget: true
+      canForget: false
     })
   })
 
@@ -124,7 +124,7 @@ describe('Host Trust dialogs', () => {
       destination: 'example.test:22'
     })
     expect(forgetConfirmCopy('example.test:22')).toBe(
-      'Forget the trusted host key for example.test:22? Every Connection Profile that uses this destination will verify the host key on the next connection. Live SSH Sessions stay connected.'
+      'Forget the trusted host key for example.test:22? Every Connection Profile that uses this destination will verify the Trusted Host Key on the next SSH Session. Live SSH Sessions stay connected.'
     )
   })
 })
