@@ -13,6 +13,7 @@ import {
   type InterfaceStatusRun
 } from '../../shared/picos/interface-status'
 import { l2CliCommand, parseL2, type L2ChannelFailure, type L2Run } from '../../shared/picos/l2'
+import { l3CliCommand, parseL3, type L3ChannelFailure, type L3Run } from '../../shared/picos/l3'
 
 export const DIAGNOSTICS_STDERR_HEAD_CHARS = 200
 
@@ -23,6 +24,7 @@ export type DiagnosticsApi = {
     interfaces?: readonly string[]
   ) => Promise<InterfaceStatusRun>
   runL2: (profileId: string) => Promise<L2Run>
+  runL3: (profileId: string) => Promise<L3Run>
 }
 
 export type CreateDiagnosticsApiDeps = {
@@ -41,7 +43,10 @@ function stderrHead(stderr: string, stdout: string): string {
   return head(stdout)
 }
 
-type ChannelFailure = DeviceFactsChannelFailure & InterfaceStatusChannelFailure & L2ChannelFailure
+type ChannelFailure = DeviceFactsChannelFailure &
+  InterfaceStatusChannelFailure &
+  L2ChannelFailure &
+  L3ChannelFailure
 
 function channelFailure(captured: ExecChannelResult): { kind: 'no-session' } | ChannelFailure {
   if (captured.ok) {
@@ -73,7 +78,7 @@ function channelFailure(captured: ExecChannelResult): { kind: 'no-session' } | C
 }
 
 export function createDiagnosticsApi(deps: CreateDiagnosticsApiDeps): DiagnosticsApi {
-  const inflight = new Map<string, Promise<DeviceFactsRun | InterfaceStatusRun | L2Run>>()
+  const inflight = new Map<string, Promise<DeviceFactsRun | InterfaceStatusRun | L2Run | L3Run>>()
 
   async function runDeviceFactsOnce(profileId: string): Promise<DeviceFactsRun> {
     if (!deps.hasLiveSession(profileId)) {
@@ -123,7 +128,20 @@ export function createDiagnosticsApi(deps: CreateDiagnosticsApiDeps): Diagnostic
     return { kind: 'ok', block, raw: framed.cleaned }
   }
 
-  function dedupe<T extends DeviceFactsRun | InterfaceStatusRun | L2Run>(
+  async function runL3Once(profileId: string): Promise<L3Run> {
+    if (!deps.hasLiveSession(profileId)) {
+      return { kind: 'no-session' }
+    }
+    const captured = await deps.exec(profileId, l3CliCommand())
+    if (!captured.ok) {
+      return channelFailure(captured)
+    }
+    const framed = frameCliOutput(captured.stdout)
+    const block = parseL3(framed.commands, framed.cleaned)
+    return { kind: 'ok', block, raw: framed.cleaned }
+  }
+
+  function dedupe<T extends DeviceFactsRun | InterfaceStatusRun | L2Run | L3Run>(
     key: string,
     start: () => Promise<T>
   ): Promise<T> {
@@ -154,6 +172,10 @@ export function createDiagnosticsApi(deps: CreateDiagnosticsApiDeps): Diagnostic
     runL2(profileId) {
       const id = profileId.trim()
       return dedupe(`l2:${id}`, () => runL2Once(id))
+    },
+    runL3(profileId) {
+      const id = profileId.trim()
+      return dedupe(`l3:${id}`, () => runL3Once(id))
     }
   }
 }

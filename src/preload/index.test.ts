@@ -65,7 +65,8 @@ describe('preload bridge', () => {
     expect(Object.keys(diagnostics).sort()).toEqual([
       'runDeviceFacts',
       'runInterfaceStatus',
-      'runL2'
+      'runL2',
+      'runL3'
     ])
     const mcp = (api as { mcp: unknown }).mcp
     if (typeof mcp !== 'object' || mcp === null) {
