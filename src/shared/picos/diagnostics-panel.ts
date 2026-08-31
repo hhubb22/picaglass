@@ -12,6 +12,7 @@ import {
 } from './interface-status'
 import { l2Card, type L2Card, type L2Run } from './l2'
 import { l3Card, type L3Card, type L3Run } from './l3'
+import { logsCard, type LogsCard, type LogsRun } from './logs'
 
 export const NEED_SESSION_MESSAGE = '请先连接'
 export { PARSE_FAILED_NOTICE, VIEW_RAW_LABEL }
@@ -152,4 +153,28 @@ export function l3PanelView(run: L3Run): L3PanelView {
     return channelFailedView(run)
   }
   return { status: 'ready', ...l3Card(run.block, run.raw) }
+}
+
+export type LogsPanelView =
+  | { status: 'need-session'; message: string }
+  | {
+      status: 'channel-failed'
+      message: string
+      exitCode?: number
+      stderrHead: string
+    }
+  | { status: 'invalid-lines'; message: string }
+  | ({ status: 'ready' } & LogsCard)
+
+export function logsPanelView(run: LogsRun): LogsPanelView {
+  if (run.kind === 'no-session') {
+    return { status: 'need-session', message: NEED_SESSION_MESSAGE }
+  }
+  if (run.kind === 'invalid-lines') {
+    return { status: 'invalid-lines', message: run.reason }
+  }
+  if (run.kind === 'channel-failed') {
+    return channelFailedView(run)
+  }
+  return { status: 'ready', ...logsCard(run.block, run.raw) }
 }

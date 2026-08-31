@@ -9,12 +9,14 @@ import type { DeviceFactsRun } from '../../shared/picos/device-facts'
 import type { InterfaceStatusRun } from '../../shared/picos/interface-status'
 import type { L2Run } from '../../shared/picos/l2'
 import type { L3Run } from '../../shared/picos/l3'
+import type { LogsRun } from '../../shared/picos/logs'
 import { createMcpServer, type McpServerHandle } from './create-mcp-server'
 
 type OkDeviceFactsRun = Extract<DeviceFactsRun, { kind: 'ok' }>
 type OkInterfaceStatusRun = Extract<InterfaceStatusRun, { kind: 'ok' }>
 type OkL2Run = Extract<L2Run, { kind: 'ok' }>
 type OkL3Run = Extract<L3Run, { kind: 'ok' }>
+type OkLogsRun = Extract<LogsRun, { kind: 'ok' }>
 
 const TOKEN = 'b'.repeat(64)
 const STARTED_AT = '2026-08-31T00:00:00.000Z'
@@ -161,6 +163,36 @@ const parsedL3: OkL3Run = {
     hardwareHosts: { status: 'parsed', data: hardwareHostData, raw: 'host-raw' },
     arp: { status: 'parsed', data: arpData, raw: 'arp-raw' },
     neighbors: { status: 'parsed', data: arpData, raw: 'neigh-raw' }
+  }
+}
+
+const syslogData = {
+  rows: [
+    {
+      timestamp: 'Aug 31 2026 09:35:29',
+      host: 'PICOS',
+      facility: 'local0',
+      severity: 'debug',
+      message: '[SIF]Get port link status, interface: ae28'
+    }
+  ],
+  unparsedLines: 0
+}
+
+const coreData = {
+  path: '/pica/core',
+  target: '/mnt/open/picos/support',
+  symlink: true,
+  cores: [] as Array<{ name: string }>,
+  unparsedLines: 0
+}
+
+const parsedLogs: OkLogsRun = {
+  kind: 'ok',
+  raw: 'logs-raw',
+  block: {
+    syslog: { status: 'parsed', data: syslogData, raw: 'syslog-raw' },
+    core: { status: 'parsed', data: coreData, raw: 'core-raw' }
   }
 }
 
@@ -329,6 +361,7 @@ describe('embedded MCP server', () => {
     ) => Promise<InterfaceStatusRun>
     runL2?: (profileId: string) => Promise<L2Run>
     runL3?: (profileId: string) => Promise<L3Run>
+    runLogs?: (profileId: string, lines?: number) => Promise<LogsRun>
     createToken?: () => string
     now?: () => Date
   }): Promise<{ dir: string; handle: McpServerHandle }> {
@@ -342,6 +375,7 @@ describe('embedded MCP server', () => {
       runInterfaceStatus: async () => ({ kind: 'no-session' }),
       runL2: async () => ({ kind: 'no-session' }),
       runL3: async () => ({ kind: 'no-session' }),
+      runLogs: async () => ({ kind: 'no-session' }),
       createToken: () => TOKEN,
       now: () => new Date(STARTED_AT),
       ...overrides
@@ -927,6 +961,115 @@ describe('embedded MCP server', () => {
         status: 'parse-failed',
         reason: 'missing arp skeleton',
         raw: 'not arp'
+      }
+    })
+  })
+
+  it('returns structured recent logs without raw by default, including empty cores', async () => {
+    const seen: Array<{ profileId: string; lines: number | undefined }> = []
+    const { handle } = await start({
+      listProfiles: async () => [{ id: 'p-lab', label: 'lab switch' }],
+      hasLiveSession: (profileId) => profileId === 'p-lab',
+      runLogs: async (profileId, lines) => {
+        seen.push({ profileId, lines })
+        return parsedLogs
+      }
+    })
+    const sessionId = await openSession(handle)
+    const result = await callTool(handle, sessionId, 'picos_get_recent_logs', { profile: 'p-lab' })
+    expect(seen).toEqual([{ profileId: 'p-lab', lines: undefined }])
+    expect(result.isError).toBe(false)
+    expect(result.json).toEqual({
+      profile: { id: 'p-lab', label: 'lab switch' },
+      syslog: { status: 'parsed', data: syslogData },
+      core: { status: 'parsed', data: coreData }
+    })
+    expect(JSON.stringify(result.json)).not.toContain('syslog-raw')
+    expect(JSON.stringify(result.json)).not.toContain('core-raw')
+    const withLines = await callTool(handle, sessionId, 'picos_get_recent_logs', {
+      profile: 'p-lab',
+      lines: 200
+    })
+    expect(seen).toEqual([
+      { profileId: 'p-lab', lines: undefined },
+      { profileId: 'p-lab', lines: 200 }
+    ])
+    expect(withLines.isError).toBe(false)
+    const withRaw = await callTool(handle, sessionId, 'picos_get_recent_logs', {
+      profile: 'p-lab',
+      includeRaw: true
+    })
+    expect(JSON.stringify(withRaw.json)).toContain('syslog-raw')
+    expect(JSON.stringify(withRaw.json)).toContain('core-raw')
+  })
+
+  it('returns a protocol error when logs have no active SSH Session', async () => {
+    const seen: string[] = []
+    const { handle } = await start({
+      listProfiles: async () => [{ id: 'p-lab', label: 'lab switch' }],
+      hasLiveSession: () => false,
+      runLogs: async () => {
+        seen.push('ran')
+        return parsedLogs
+      }
+    })
+    const sessionId = await openSession(handle)
+    const result = await callTool(handle, sessionId, 'picos_get_recent_logs', {
+      profile: 'lab switch'
+    })
+    expect(result.isError).toBe(true)
+    expect(result.text).toBe('No active SSH Session for profile lab switch.')
+    expect(seen).toEqual([])
+  })
+
+  it('returns a protocol error for an invalid log line count', async () => {
+    const seen: number[] = []
+    const { handle } = await start({
+      listProfiles: async () => [{ id: 'p-lab', label: 'lab switch' }],
+      hasLiveSession: () => true,
+      runLogs: async (_profileId, lines) => {
+        if (lines !== undefined) {
+          seen.push(lines)
+        }
+        return { kind: 'invalid-lines', reason: 'invalid log line count: 0' }
+      }
+    })
+    const sessionId = await openSession(handle)
+    const result = await callTool(handle, sessionId, 'picos_get_recent_logs', {
+      profile: 'p-lab',
+      lines: 0
+    })
+    expect(result.isError).toBe(true)
+    expect(result.text).toBe('invalid log line count: 0')
+    expect(seen).toEqual([0])
+  })
+
+  it('returns parse-failed syslog as a normal payload with raw and reason', async () => {
+    const run: LogsRun = {
+      kind: 'ok',
+      raw: 'not syslog',
+      block: {
+        syslog: {
+          status: 'parse-failed',
+          raw: 'not syslog',
+          reason: 'missing syslog skeleton'
+        },
+        core: parsedLogs.block.core
+      }
+    }
+    const { handle } = await start({
+      listProfiles: async () => [{ id: 'p-lab', label: 'lab switch' }],
+      hasLiveSession: () => true,
+      runLogs: async () => run
+    })
+    const sessionId = await openSession(handle)
+    const result = await callTool(handle, sessionId, 'picos_get_recent_logs', { profile: 'p-lab' })
+    expect(result.isError).toBe(false)
+    expect(result.json).toMatchObject({
+      syslog: {
+        status: 'parse-failed',
+        reason: 'missing syslog skeleton',
+        raw: 'not syslog'
       }
     })
   })

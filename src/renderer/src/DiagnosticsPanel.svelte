@@ -4,11 +4,18 @@
   import type { L2Run } from '../../shared/picos/l2'
   import type { L3Run } from '../../shared/picos/l3'
   import {
+    DEFAULT_LOG_LINES,
+    MAX_LOG_LINES,
+    MIN_LOG_LINES,
+    type LogsRun
+  } from '../../shared/picos/logs'
+  import {
     diagnosticBlockTabs,
     deviceFactsPanelView,
     interfaceStatusPanelView,
     l2PanelView,
     l3PanelView,
+    logsPanelView,
     type DiagnosticBlockId
   } from '../../shared/picos/diagnostics-panel'
   import type { ProfileSessionUi } from '../../shared/ssh-session-ui'
@@ -29,21 +36,28 @@
   let interfaceStatusLoading = $state(false)
   let l2Loading = $state(false)
   let l3Loading = $state(false)
+  let logsLoading = $state(false)
   let deviceFactsRun = $state<DeviceFactsRun | null>(null)
   let interfaceStatusRun = $state<InterfaceStatusRun | null>(null)
   let l2Run = $state<L2Run | null>(null)
   let l3Run = $state<L3Run | null>(null)
+  let logsRun = $state<LogsRun | null>(null)
   let loadedDeviceFactsSessionId = $state<string | null>(null)
   let loadedInterfaceStatusKey = $state<string | null>(null)
   let loadedL2SessionId = $state<string | null>(null)
   let loadedL3SessionId = $state<string | null>(null)
+  let loadedLogsKey = $state<string | null>(null)
   let selectedNames = $state<string[]>([])
   let requestedDetailNames = $state<string[]>([])
+  let logLinesDraft = $state(DEFAULT_LOG_LINES)
+  let requestedLogLines = $state(DEFAULT_LOG_LINES)
   let deviceFactsRequest = 0
   let interfaceStatusRequest = 0
   let l2Request = 0
   let l3Request = 0
+  let logsRequest = 0
   let interfaceStatusLoadingKey = $state<string | null>(null)
+  let logsLoadingKey = $state<string | null>(null)
 
   const connected = $derived(session.state === 'connected' && session.sessionId !== null)
   const deviceFactsView = $derived(
@@ -54,6 +68,7 @@
   )
   const l2View = $derived(l2Run === null ? null : l2PanelView(l2Run))
   const l3View = $derived(l3Run === null ? null : l3PanelView(l3Run))
+  const logsView = $derived(logsRun === null ? null : logsPanelView(logsRun))
   const loading = $derived(
     selectedBlock === 'interface-status'
       ? interfaceStatusLoading
@@ -61,7 +76,9 @@
         ? l2Loading
         : selectedBlock === 'l3'
           ? l3Loading
-          : deviceFactsLoading
+          : selectedBlock === 'logs'
+            ? logsLoading
+            : deviceFactsLoading
   )
 
   function namesKey(names: string[]): string {
@@ -135,6 +152,30 @@
     } finally {
       if (seq === l3Request) {
         l3Loading = false
+      }
+    }
+  }
+
+  function logsKey(sessionId: string, lines: number): string {
+    return `${sessionId}:${String(lines)}`
+  }
+
+  async function loadLogs(sessionId: string, lines: number): Promise<void> {
+    const seq = ++logsRequest
+    const key = logsKey(sessionId, lines)
+    logsLoading = true
+    logsLoadingKey = key
+    try {
+      const next = await window.api.diagnostics.runLogs(profileId, lines)
+      if (seq !== logsRequest) {
+        return
+      }
+      logsRun = next
+      loadedLogsKey = key
+    } finally {
+      if (seq === logsRequest) {
+        logsLoading = false
+        logsLoadingKey = null
       }
     }
   }
@@ -232,6 +273,33 @@
     void loadL3(sessionId)
   })
 
+  $effect(() => {
+    const sessionId = session.sessionId
+    const state = session.state
+    if (state !== 'connected' || sessionId === null) {
+      if (logsLoading) {
+        logsRequest += 1
+        logsLoading = false
+      }
+      loadedLogsKey = null
+      logsRun = null
+      return
+    }
+    if (collapsed || selectedBlock !== 'logs') {
+      return
+    }
+    const lines = requestedLogLines
+    const key = logsKey(sessionId, lines)
+    if (loadedLogsKey === key) {
+      return
+    }
+    if (logsLoading && logsLoadingKey === key) {
+      return
+    }
+    logsRun = null
+    void loadLogs(sessionId, lines)
+  })
+
   function refresh(): void {
     if (session.sessionId === null || session.state !== 'connected') {
       return
@@ -249,6 +317,11 @@
     if (selectedBlock === 'l3') {
       loadedL3SessionId = null
       void loadL3(session.sessionId)
+      return
+    }
+    if (selectedBlock === 'logs') {
+      loadedLogsKey = null
+      void loadLogs(session.sessionId, requestedLogLines)
       return
     }
     loadedDeviceFactsSessionId = null
@@ -270,6 +343,10 @@
 
   function loadSelectedDetail(): void {
     requestedDetailNames = [...selectedNames]
+  }
+
+  function applyLogLines(): void {
+    requestedLogLines = logLinesDraft
   }
 </script>
 
@@ -1005,6 +1082,127 @@
             </table>
           {/if}
         {/if}
+      {:else if selectedBlock === 'logs' && (logsView === null || logsView.status === 'need-session')}
+        <p>{logsView === null ? 'Loading…' : logsView.message}</p>
+      {:else if selectedBlock === 'logs' && logsView !== null && logsView.status === 'channel-failed'}
+        <div class="notice channel" role="alert">
+          <p>{logsView.message}</p>
+          {#if logsView.stderrHead.length > 0}
+            <pre>{logsView.stderrHead}</pre>
+          {/if}
+        </div>
+        <button type="button" onclick={refresh}>Refresh</button>
+      {:else if selectedBlock === 'logs' && logsView !== null && logsView.status === 'invalid-lines'}
+        <div class="notice channel" role="alert">
+          <p>{logsView.message}</p>
+        </div>
+        <div class="toolbar">
+          <label class="lines">
+            Lines
+            <input
+              type="number"
+              min={MIN_LOG_LINES}
+              max={MAX_LOG_LINES}
+              bind:value={logLinesDraft}
+            />
+          </label>
+          <button type="button" onclick={applyLogLines}>Apply</button>
+        </div>
+      {:else if selectedBlock === 'logs' && logsView !== null && logsView.status === 'ready'}
+        <div class="toolbar">
+          <button type="button" onclick={refresh} disabled={loading}>Refresh</button>
+          <label class="lines">
+            Lines
+            <input
+              type="number"
+              min={MIN_LOG_LINES}
+              max={MAX_LOG_LINES}
+              bind:value={logLinesDraft}
+            />
+          </label>
+          <button type="button" onclick={applyLogLines} disabled={loading}>Apply</button>
+          <button type="button" aria-pressed={showRaw} onclick={() => (showRaw = !showRaw)}>
+            {logsView.viewRawLabel}
+          </button>
+        </div>
+        {#if logsView.parseFailed}
+          <div class="notice parse" role="status">
+            <p>{logsView.parseFailedNotice}</p>
+          </div>
+        {/if}
+        {#if showRaw || logsView.parseFailed}
+          <pre class="raw">{logsView.raw}</pre>
+        {/if}
+        {#if !showRaw}
+          <h3>Recent syslog</h3>
+          {#if logsView.syslogFailure}
+            <div class="notice parse" role="status">
+              <p>{logsView.syslogFailure.reason}</p>
+              <pre class="raw">{logsView.syslogFailure.raw}</pre>
+            </div>
+          {:else if logsView.emptySyslogNotice}
+            <p class="muted">{logsView.emptySyslogNotice}</p>
+          {:else if logsView.syslog !== null}
+            <table>
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Host</th>
+                  <th>Program</th>
+                  <th>Facility</th>
+                  <th>Message</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each logsView.syslog as row, index (`${row.timestamp}:${row.message}:${index}`)}
+                  <tr>
+                    <td>{row.timestamp}</td>
+                    <td>{row.host}</td>
+                    <td>{row.program ?? '—'}</td>
+                    <td>{row.facility}.{row.severity}</td>
+                    <td>{row.message}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          {/if}
+
+          <h3>Core dumps</h3>
+          {#if logsView.corePath}
+            <p class="muted">
+              {logsView.corePath}{logsView.coreTarget
+                ? ` → ${logsView.coreTarget}`
+                : ''}{logsView.coreSymlink ? ' (symlink)' : ''}
+            </p>
+          {/if}
+          {#if logsView.coreFailure}
+            <div class="notice parse" role="status">
+              <p>{logsView.coreFailure.reason}</p>
+              <pre class="raw">{logsView.coreFailure.raw}</pre>
+            </div>
+          {:else if logsView.emptyCoresNotice}
+            <p class="muted">{logsView.emptyCoresNotice}</p>
+          {:else if logsView.cores !== null}
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Size</th>
+                  <th>Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each logsView.cores as row, index (`${row.name}:${index}`)}
+                  <tr>
+                    <td>{row.name}</td>
+                    <td>{row.size ?? '—'}</td>
+                    <td>{row.date ?? '—'}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          {/if}
+        {/if}
       {/if}
     </div>
   {/if}
@@ -1083,6 +1281,24 @@
   .toolbar {
     display: flex;
     gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .lines {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.9rem;
+  }
+
+  .lines input {
+    width: 5rem;
+    font: inherit;
+    padding: 6px 8px;
+    color: inherit;
+    background: var(--bg);
+    border: 1px solid var(--border);
   }
 
   .compare {

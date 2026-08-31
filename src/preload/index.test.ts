@@ -66,7 +66,8 @@ describe('preload bridge', () => {
       'runDeviceFacts',
       'runInterfaceStatus',
       'runL2',
-      'runL3'
+      'runL3',
+      'runLogs'
     ])
     const mcp = (api as { mcp: unknown }).mcp
     if (typeof mcp !== 'object' || mcp === null) {

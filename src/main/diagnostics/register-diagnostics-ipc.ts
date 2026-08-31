@@ -4,6 +4,7 @@ import type { DeviceFactsRun } from '../../shared/picos/device-facts'
 import type { InterfaceStatusRun } from '../../shared/picos/interface-status'
 import type { L2Run } from '../../shared/picos/l2'
 import type { L3Run } from '../../shared/picos/l3'
+import type { LogsRun } from '../../shared/picos/logs'
 
 function noSession(): DeviceFactsRun {
   return { kind: 'no-session' }
@@ -55,4 +56,16 @@ export function registerDiagnosticsIpc(api: DiagnosticsApi): void {
     }
     return api.runL3(profileId)
   })
+  ipcMain.handle(
+    'diagnostics:runLogs',
+    (_event, profileId: unknown, lines: unknown): Promise<LogsRun> | LogsRun => {
+      if (typeof profileId !== 'string' || profileId.trim().length === 0) {
+        return { kind: 'no-session' }
+      }
+      if (lines !== undefined && typeof lines !== 'number') {
+        return { kind: 'invalid-lines', reason: `invalid log line count: ${JSON.stringify(lines)}` }
+      }
+      return api.runLogs(profileId, lines)
+    }
+  )
 }
