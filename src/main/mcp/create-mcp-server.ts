@@ -33,6 +33,12 @@ import {
   type TechSupportSnapshot,
   type TechSupportStartResult
 } from '../../shared/picos/tech-support'
+import {
+  authorizeRunShow,
+  type RunShowChannelFailure,
+  type RunShowOutput,
+  type RunShowRun
+} from '../../shared/picos/run-show'
 
 export type McpProfileListing = {
   id: string
@@ -51,6 +57,7 @@ export type CreateMcpServerDeps = {
   runL2: (profileId: string) => Promise<L2Run>
   runL3: (profileId: string) => Promise<L3Run>
   runLogs: (profileId: string, lines?: number) => Promise<LogsRun>
+  runShow: (profileId: string, command: string) => Promise<RunShowRun>
   startTechSupport: (profileId: string) => Promise<TechSupportStartResult>
   getTechSupport: (profileId: string) => TechSupportSnapshot
   now?: () => Date
@@ -205,6 +212,13 @@ function projectResult<T>(result: ParsedResult<T>, includeRaw: boolean): unknown
   return { status: 'parsed', data: result.data }
 }
 
+function projectRunShow(result: RunShowOutput, includeRaw: boolean): unknown {
+  if (result.status === 'raw') {
+    return { status: 'raw', raw: result.raw }
+  }
+  return projectResult(result, includeRaw)
+}
+
 function channelErrorText(
   run:
     | DeviceFactsChannelFailure
@@ -212,6 +226,7 @@ function channelErrorText(
     | L2ChannelFailure
     | L3ChannelFailure
     | LogsChannelFailure
+    | RunShowChannelFailure
 ): string {
   let message = 'Command failed.'
   if (run.reason === 'timeout') {
@@ -585,6 +600,53 @@ function registerTools(server: McpServer, deps: CreateMcpServerDeps): void {
         return mcpText(projectTechSupport(started.snapshot, resolved.profile))
       }
       return mcpText(projectTechSupport(current, resolved.profile))
+    }
+  )
+
+  server.registerTool(
+    'run_show',
+    {
+      title: 'Run a read-only show or ping command',
+      description:
+        'Escape hatch for a single read-only PicOS show or ping command on a Connection Profile that has an active SSH Session. Only show and ping are allowed; ping targets and count are validated; pipes are limited to count, except, find, match, and no-more; command chaining is rejected; | no-more is appended. The whitelist is enforced in this tool, not only at registration. Returns raw text, or structured data when an existing parser matches.',
+      inputSchema: {
+        profile: z.string().min(1).describe('Connection Profile id or Profile Label'),
+        command: z.string().min(1).describe('A single show or ping command'),
+        includeRaw: z
+          .boolean()
+          .optional()
+          .describe('When true, include raw command text for parsed results')
+      },
+      annotations: READ_ONLY
+    },
+    async ({ profile, command, includeRaw }) => {
+      const authorized = authorizeRunShow(command)
+      if (!authorized.ok) {
+        return mcpToolError(authorized.reason)
+      }
+      const profiles = await deps.listProfiles()
+      const resolved = resolveProfile(profiles, profile)
+      if (!resolved.ok) {
+        return mcpToolError(resolved.message)
+      }
+      if (!deps.hasLiveSession(resolved.profile.id)) {
+        return noSessionError(resolved.profile.label)
+      }
+      const run = await deps.runShow(resolved.profile.id, command)
+      if (run.kind === 'rejected') {
+        return mcpToolError(run.reason)
+      }
+      if (run.kind === 'no-session') {
+        return noSessionError(resolved.profile.label)
+      }
+      if (run.kind === 'channel-failed') {
+        return mcpToolError(channelErrorText(run))
+      }
+      return mcpText({
+        profile: { id: resolved.profile.id, label: resolved.profile.label },
+        command: run.command,
+        result: projectRunShow(run.result, includeRaw === true)
+      })
     }
   )
 }

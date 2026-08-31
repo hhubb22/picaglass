@@ -23,6 +23,12 @@ import {
   type LogsRun
 } from '../../shared/picos/logs'
 import {
+  authorizeRunShow,
+  parseRunShowOutput,
+  type RunShowChannelFailure,
+  type RunShowRun
+} from '../../shared/picos/run-show'
+import {
   TECH_SUPPORT_CLEANUP_FAILED_MESSAGE,
   TECH_SUPPORT_COLLECT_TIMEOUT_MS,
   TECH_SUPPORT_POLL_INTERVAL_MS,
@@ -61,6 +67,7 @@ export type DiagnosticsApi = {
   runL2: (profileId: string) => Promise<L2Run>
   runL3: (profileId: string) => Promise<L3Run>
   runLogs: (profileId: string, lines?: number) => Promise<LogsRun>
+  runShow: (profileId: string, command: string) => Promise<RunShowRun>
   startTechSupport: (profileId: string) => Promise<TechSupportStartResult>
   getTechSupport: (profileId: string) => TechSupportSnapshot
   deleteTechSupportRemote: (profileId: string) => Promise<TechSupportDeleteRemoteResult>
@@ -96,7 +103,8 @@ type ChannelFailure = DeviceFactsChannelFailure &
   InterfaceStatusChannelFailure &
   L2ChannelFailure &
   L3ChannelFailure &
-  LogsChannelFailure
+  LogsChannelFailure &
+  RunShowChannelFailure
 
 function channelFailure(captured: ExecChannelResult): { kind: 'no-session' } | ChannelFailure {
   if (captured.ok) {
@@ -176,7 +184,7 @@ type TechSupportTask = {
 export function createDiagnosticsApi(deps: CreateDiagnosticsApiDeps): DiagnosticsApi {
   const inflight = new Map<
     string,
-    Promise<DeviceFactsRun | InterfaceStatusRun | L2Run | L3Run | LogsRun>
+    Promise<DeviceFactsRun | InterfaceStatusRun | L2Run | L3Run | LogsRun | RunShowRun>
   >()
   const tasks = new Map<string, TechSupportTask>()
   const pollIntervalMs = deps.pollIntervalMs ?? TECH_SUPPORT_POLL_INTERVAL_MS
@@ -489,10 +497,34 @@ export function createDiagnosticsApi(deps: CreateDiagnosticsApiDeps): Diagnostic
     return { kind: 'ok', block, raw: framed.cleaned }
   }
 
-  function dedupe<T extends DeviceFactsRun | InterfaceStatusRun | L2Run | L3Run | LogsRun>(
-    key: string,
-    start: () => Promise<T>
-  ): Promise<T> {
+  async function runShowOnce(profileId: string, command: string): Promise<RunShowRun> {
+    const authorized = authorizeRunShow(command)
+    if (!authorized.ok) {
+      return { kind: 'rejected', reason: authorized.reason }
+    }
+    if (!deps.hasLiveSession(profileId)) {
+      return { kind: 'no-session' }
+    }
+    const captured = await deps.exec(profileId, authorized.cliCommand)
+    if (!captured.ok) {
+      return channelFailure(captured)
+    }
+    const framed = frameCliOutput(captured.stdout)
+    const raw =
+      framed.commands.length === 1 && framed.commands[0] !== undefined
+        ? framed.commands[0].output
+        : framed.cleaned
+    return {
+      kind: 'ok',
+      command: authorized.inner,
+      result: parseRunShowOutput(authorized.inner, raw),
+      raw: framed.cleaned
+    }
+  }
+
+  function dedupe<
+    T extends DeviceFactsRun | InterfaceStatusRun | L2Run | L3Run | LogsRun | RunShowRun
+  >(key: string, start: () => Promise<T>): Promise<T> {
     const existing = inflight.get(key)
     if (existing !== undefined) {
       return existing as Promise<T>
@@ -530,6 +562,14 @@ export function createDiagnosticsApi(deps: CreateDiagnosticsApiDeps): Diagnostic
       const parsed = logsCliCommand(lines)
       const linesKey = parsed.ok ? String(parsed.lines) : parsed.reason
       return dedupe(`logs:${id}:${linesKey}`, () => runLogsOnce(id, lines))
+    },
+    runShow(profileId, command) {
+      const id = profileId.trim()
+      const authorized = authorizeRunShow(command)
+      if (!authorized.ok) {
+        return Promise.resolve({ kind: 'rejected', reason: authorized.reason })
+      }
+      return dedupe(`run-show:${id}:${authorized.inner}`, () => runShowOnce(id, command))
     },
     startTechSupport,
     getTechSupport(profileId) {

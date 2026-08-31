@@ -145,6 +145,7 @@ app.whenReady().then(async () => {
       runL2: (profileId) => diagnosticsApi.runL2(profileId),
       runL3: (profileId) => diagnosticsApi.runL3(profileId),
       runLogs: (profileId, lines) => diagnosticsApi.runLogs(profileId, lines),
+      runShow: (profileId, command) => diagnosticsApi.runShow(profileId, command),
       startTechSupport: (profileId) => diagnosticsApi.startTechSupport(profileId),
       getTechSupport: (profileId) => diagnosticsApi.getTechSupport(profileId)
     })
