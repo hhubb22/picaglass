@@ -13,6 +13,11 @@ import {
 import { l2Card, type L2Card, type L2Run } from './l2'
 import { l3Card, type L3Card, type L3Run } from './l3'
 import { logsCard, type LogsCard, type LogsRun } from './logs'
+import {
+  techSupportPanelView,
+  type TechSupportPanelView,
+  type TechSupportSnapshot
+} from './tech-support'
 
 export const NEED_SESSION_MESSAGE = '请先连接'
 export { PARSE_FAILED_NOTICE, VIEW_RAW_LABEL }
@@ -178,3 +183,6 @@ export function logsPanelView(run: LogsRun): LogsPanelView {
   }
   return { status: 'ready', ...logsCard(run.block, run.raw) }
 }
+
+export type { TechSupportPanelView, TechSupportSnapshot }
+export { techSupportPanelView }

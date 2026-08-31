@@ -1,4 +1,6 @@
-import type { ExecChannelResult } from '../ssh/create-ssh-api'
+import { randomUUID } from 'node:crypto'
+import { join } from 'node:path'
+import type { ExecChannelResult, SftpGetResult } from '../ssh/create-ssh-api'
 import { frameCliOutput } from './frame-cli-output'
 import {
   deviceFactsCliCommand,
@@ -20,6 +22,33 @@ import {
   type LogsChannelFailure,
   type LogsRun
 } from '../../shared/picos/logs'
+import {
+  TECH_SUPPORT_CLEANUP_FAILED_MESSAGE,
+  TECH_SUPPORT_COLLECT_TIMEOUT_MS,
+  TECH_SUPPORT_POLL_INTERVAL_MS,
+  TECH_SUPPORT_REMOTE_DELETED_MESSAGE,
+  TECH_SUPPORT_STARTED_MESSAGE,
+  TECH_SUPPORT_TRANSFERRING_MESSAGE,
+  TECH_SUPPORT_WAITING_FOR_SESSION,
+  idleTechSupportSnapshot,
+  isTechSupportInFlight,
+  parseTechSupportPoll,
+  pickLatestTechSupportFile,
+  techSupportDeleteCommand,
+  techSupportFileName,
+  techSupportPollCommand,
+  techSupportProcessMessage,
+  techSupportSizeMismatchMessage,
+  techSupportStartCommand,
+  techSupportVerifiedMessage,
+  type TechSupportDeleteRemoteResult,
+  type TechSupportFailureStage,
+  type TechSupportPhase,
+  type TechSupportPollFile,
+  type TechSupportRevealResult,
+  type TechSupportSnapshot,
+  type TechSupportStartResult
+} from '../../shared/picos/tech-support'
 
 export const DIAGNOSTICS_STDERR_HEAD_CHARS = 200
 
@@ -32,11 +61,24 @@ export type DiagnosticsApi = {
   runL2: (profileId: string) => Promise<L2Run>
   runL3: (profileId: string) => Promise<L3Run>
   runLogs: (profileId: string, lines?: number) => Promise<LogsRun>
+  startTechSupport: (profileId: string) => Promise<TechSupportStartResult>
+  getTechSupport: (profileId: string) => TechSupportSnapshot
+  deleteTechSupportRemote: (profileId: string) => Promise<TechSupportDeleteRemoteResult>
+  revealTechSupportArtifact: (profileId: string) => Promise<TechSupportRevealResult>
+  dispose: () => void
 }
 
 export type CreateDiagnosticsApiDeps = {
   hasLiveSession: (profileId: string) => boolean
   exec: (profileId: string, command: string) => Promise<ExecChannelResult>
+  pullFile?: (profileId: string, remotePath: string, localPath: string) => Promise<SftpGetResult>
+  userDataPath?: string
+  now?: () => Date
+  pollIntervalMs?: number
+  collectTimeoutMs?: number
+  createTaskId?: () => string
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>
+  revealItemInFolder?: (fullPath: string) => void
 }
 
 function head(text: string): string {
@@ -85,11 +127,289 @@ function channelFailure(captured: ExecChannelResult): { kind: 'no-session' } | C
   }
 }
 
+function execFailureMessage(captured: Exclude<ExecChannelResult, { ok: true }>): string {
+  if (captured.reason === 'timeout') {
+    const details = stderrHead(captured.stderr, captured.stdout)
+    return details.length > 0 ? `Command timed out\n${details}` : 'Command timed out'
+  }
+  if (captured.reason === 'rejected') {
+    return captured.message
+  }
+  if (captured.reason === 'no-session') {
+    return 'No active SSH Session'
+  }
+  const details = stderrHead(captured.stderr, captured.stdout)
+  const prefix = `Command failed (exit ${captured.exitCode})`
+  return details.length > 0 ? `${prefix}\n${details}` : prefix
+}
+
+function pullFailureMessage(pulled: Exclude<SftpGetResult, { ok: true }>): string {
+  if (pulled.reason === 'no-session') {
+    return 'No active SSH Session during transfer'
+  }
+  return pulled.message
+}
+
+function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve()
+      return
+    }
+    const timer = setTimeout(resolve, ms)
+    signal.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer)
+        resolve()
+      },
+      { once: true }
+    )
+  })
+}
+
+type TechSupportTask = {
+  snapshot: TechSupportSnapshot
+  abort: AbortController
+}
+
 export function createDiagnosticsApi(deps: CreateDiagnosticsApiDeps): DiagnosticsApi {
   const inflight = new Map<
     string,
     Promise<DeviceFactsRun | InterfaceStatusRun | L2Run | L3Run | LogsRun>
   >()
+  const tasks = new Map<string, TechSupportTask>()
+  const pollIntervalMs = deps.pollIntervalMs ?? TECH_SUPPORT_POLL_INTERVAL_MS
+  const collectTimeoutMs = deps.collectTimeoutMs ?? TECH_SUPPORT_COLLECT_TIMEOUT_MS
+  const sleep = deps.sleep ?? defaultSleep
+
+  function now(): Date {
+    return deps.now?.() ?? new Date()
+  }
+
+  function cloneSnapshot(snapshot: TechSupportSnapshot): TechSupportSnapshot {
+    return structuredClone(snapshot)
+  }
+
+  function currentSnapshot(profileId: string): TechSupportSnapshot {
+    const task = tasks.get(profileId)
+    if (task === undefined) {
+      return idleTechSupportSnapshot(profileId)
+    }
+    return cloneSnapshot(task.snapshot)
+  }
+
+  function stillCurrent(task: TechSupportTask, profileId: string): boolean {
+    return !task.abort.signal.aborted && tasks.get(profileId) === task
+  }
+
+  function pushProgress(task: TechSupportTask, phase: TechSupportPhase, message: string): void {
+    task.snapshot.progress.push({
+      at: now().toISOString(),
+      phase,
+      message
+    })
+  }
+
+  function failTask(task: TechSupportTask, stage: TechSupportFailureStage, message: string): void {
+    task.snapshot.phase = 'failed'
+    task.snapshot.failure = { stage, message }
+    task.snapshot.waitingForSession = false
+    pushProgress(task, 'failed', message)
+  }
+
+  function recordPoll(
+    task: TechSupportTask,
+    file: TechSupportPollFile | undefined,
+    running: boolean
+  ): void {
+    task.snapshot.lastProcessRunning = running
+    if (file !== undefined) {
+      task.snapshot.lastRemotePath = file.path
+      task.snapshot.lastRemoteBytes = file.bytes
+    }
+    pushProgress(task, 'collecting', techSupportProcessMessage(running, file))
+  }
+
+  async function transferArtifact(
+    task: TechSupportTask,
+    profileId: string,
+    file: TechSupportPollFile
+  ): Promise<void> {
+    task.snapshot.phase = 'transferring'
+    pushProgress(task, 'transferring', TECH_SUPPORT_TRANSFERRING_MESSAGE)
+    const userDataPath = deps.userDataPath
+    const pullFile = deps.pullFile
+    if (userDataPath === undefined || pullFile === undefined) {
+      failTask(task, 'transferring', 'file pull is not available')
+      return
+    }
+    const fileName = techSupportFileName(file.path)
+    const localPath = join(userDataPath, 'tech-support', profileId, fileName)
+    const pulled = await pullFile(profileId, file.path, localPath)
+    if (!stillCurrent(task, profileId)) {
+      return
+    }
+    if (!pulled.ok) {
+      failTask(task, 'transferring', pullFailureMessage(pulled))
+      return
+    }
+    task.snapshot.artifact = {
+      fileName,
+      byteSize: pulled.bytes,
+      localPath,
+      remotePath: file.path,
+      remoteDeleted: false
+    }
+    if (pulled.bytes !== file.bytes) {
+      failTask(task, 'transferring', techSupportSizeMismatchMessage(file.bytes, pulled.bytes))
+      return
+    }
+    task.snapshot.phase = 'done'
+    pushProgress(task, 'done', techSupportVerifiedMessage(pulled.bytes))
+    const del = techSupportDeleteCommand(file.path)
+    if (!del.ok) {
+      task.snapshot.cleanupError = del.reason
+      pushProgress(task, 'done', TECH_SUPPORT_CLEANUP_FAILED_MESSAGE)
+      return
+    }
+    const deleted = await deps.exec(profileId, del.command)
+    if (!stillCurrent(task, profileId)) {
+      return
+    }
+    if (!deleted.ok) {
+      task.snapshot.cleanupError = execFailureMessage(deleted)
+      pushProgress(task, 'done', TECH_SUPPORT_CLEANUP_FAILED_MESSAGE)
+      return
+    }
+    task.snapshot.artifact.remoteDeleted = true
+    pushProgress(task, 'done', TECH_SUPPORT_REMOTE_DELETED_MESSAGE)
+  }
+
+  async function runCollectLoop(task: TechSupportTask, profileId: string): Promise<void> {
+    const startedAt = now().getTime()
+    while (stillCurrent(task, profileId)) {
+      if (now().getTime() - startedAt >= collectTimeoutMs) {
+        failTask(task, 'collecting', '采集超时')
+        return
+      }
+      if (!deps.hasLiveSession(profileId)) {
+        if (!task.snapshot.waitingForSession) {
+          task.snapshot.waitingForSession = true
+          pushProgress(task, 'collecting', TECH_SUPPORT_WAITING_FOR_SESSION)
+        }
+        await sleep(pollIntervalMs, task.abort.signal)
+        continue
+      }
+      task.snapshot.waitingForSession = false
+      const captured = await deps.exec(profileId, techSupportPollCommand())
+      if (!stillCurrent(task, profileId)) {
+        return
+      }
+      if (!captured.ok) {
+        if (captured.reason === 'no-session') {
+          if (!task.snapshot.waitingForSession) {
+            task.snapshot.waitingForSession = true
+            pushProgress(task, 'collecting', TECH_SUPPORT_WAITING_FOR_SESSION)
+          }
+          await sleep(pollIntervalMs, task.abort.signal)
+          continue
+        }
+        failTask(task, 'collecting', execFailureMessage(captured))
+        return
+      }
+      const reading = parseTechSupportPoll(captured.stdout)
+      const latest = pickLatestTechSupportFile(reading.files)
+      recordPoll(task, latest, reading.processRunning)
+      if (!reading.processRunning) {
+        if (latest === undefined) {
+          failTask(task, 'collecting', '采集进程已退出，但未发现产物文件')
+          return
+        }
+        await transferArtifact(task, profileId, latest)
+        return
+      }
+      await sleep(pollIntervalMs, task.abort.signal)
+    }
+  }
+
+  async function startTechSupport(profileId: string): Promise<TechSupportStartResult> {
+    const id = profileId.trim()
+    const existing = tasks.get(id)
+    if (existing !== undefined && isTechSupportInFlight(existing.snapshot.phase)) {
+      return { kind: 'ok', snapshot: cloneSnapshot(existing.snapshot) }
+    }
+    if (!deps.hasLiveSession(id)) {
+      return { kind: 'no-session' }
+    }
+    existing?.abort.abort()
+    const task: TechSupportTask = {
+      snapshot: {
+        ...idleTechSupportSnapshot(id),
+        taskId: deps.createTaskId?.() ?? randomUUID(),
+        phase: 'starting'
+      },
+      abort: new AbortController()
+    }
+    tasks.set(id, task)
+    const captured = await deps.exec(id, techSupportStartCommand())
+    if (!stillCurrent(task, id)) {
+      return { kind: 'ok', snapshot: currentSnapshot(id) }
+    }
+    if (!captured.ok) {
+      failTask(task, 'starting', execFailureMessage(captured))
+      return { kind: 'ok', snapshot: cloneSnapshot(task.snapshot) }
+    }
+    task.snapshot.phase = 'collecting'
+    pushProgress(task, 'starting', TECH_SUPPORT_STARTED_MESSAGE)
+    void runCollectLoop(task, id)
+    return { kind: 'ok', snapshot: cloneSnapshot(task.snapshot) }
+  }
+
+  async function deleteTechSupportRemote(
+    profileId: string
+  ): Promise<TechSupportDeleteRemoteResult> {
+    const id = profileId.trim()
+    const task = tasks.get(id)
+    if (task === undefined || task.snapshot.artifact === null) {
+      return { kind: 'not-available', reason: 'no remote artifact to delete' }
+    }
+    const artifact = task.snapshot.artifact
+    if (artifact.remoteDeleted) {
+      return { kind: 'ok', snapshot: cloneSnapshot(task.snapshot) }
+    }
+    if (!deps.hasLiveSession(id)) {
+      return { kind: 'no-session' }
+    }
+    const del = techSupportDeleteCommand(artifact.remotePath)
+    if (!del.ok) {
+      return { kind: 'not-available', reason: del.reason }
+    }
+    const deleted = await deps.exec(id, del.command)
+    if (!deleted.ok) {
+      task.snapshot.cleanupError = execFailureMessage(deleted)
+      return { kind: 'ok', snapshot: cloneSnapshot(task.snapshot) }
+    }
+    artifact.remoteDeleted = true
+    task.snapshot.cleanupError = null
+    pushProgress(task, task.snapshot.phase, TECH_SUPPORT_REMOTE_DELETED_MESSAGE)
+    return { kind: 'ok', snapshot: cloneSnapshot(task.snapshot) }
+  }
+
+  async function revealTechSupportArtifact(profileId: string): Promise<TechSupportRevealResult> {
+    const task = tasks.get(profileId.trim())
+    const localPath = task?.snapshot.artifact?.localPath
+    if (localPath === undefined) {
+      return { ok: false, reason: 'no-artifact', message: 'no local artifact' }
+    }
+    try {
+      deps.revealItemInFolder?.(localPath)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'could not open directory'
+      return { ok: false, reason: 'missing-file', message }
+    }
+    return { ok: true }
+  }
 
   async function runDeviceFactsOnce(profileId: string): Promise<DeviceFactsRun> {
     if (!deps.hasLiveSession(profileId)) {
@@ -210,6 +530,18 @@ export function createDiagnosticsApi(deps: CreateDiagnosticsApiDeps): Diagnostic
       const parsed = logsCliCommand(lines)
       const linesKey = parsed.ok ? String(parsed.lines) : parsed.reason
       return dedupe(`logs:${id}:${linesKey}`, () => runLogsOnce(id, lines))
+    },
+    startTechSupport,
+    getTechSupport(profileId) {
+      return currentSnapshot(profileId.trim())
+    },
+    deleteTechSupportRemote,
+    revealTechSupportArtifact,
+    dispose() {
+      for (const task of tasks.values()) {
+        task.abort.abort()
+      }
+      tasks.clear()
     }
   }
 }

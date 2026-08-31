@@ -122,7 +122,13 @@ app.whenReady().then(async () => {
   })
   const diagnosticsApi = createDiagnosticsApi({
     hasLiveSession: (profileId) => sshApi.hasLiveSession(profileId),
-    exec: (profileId, command) => sshApi.execOnSession(profileId, command)
+    exec: (profileId, command) => sshApi.execOnSession(profileId, command),
+    pullFile: (profileId, remotePath, localPath) =>
+      sshApi.sftpGetOnSession(profileId, remotePath, localPath),
+    userDataPath: app.getPath('userData'),
+    revealItemInFolder: (fullPath) => {
+      shell.showItemInFolder(fullPath)
+    }
   })
   let mcp: McpServerHandle | undefined
   try {
@@ -138,7 +144,9 @@ app.whenReady().then(async () => {
         diagnosticsApi.runInterfaceStatus(profileId, interfaces),
       runL2: (profileId) => diagnosticsApi.runL2(profileId),
       runL3: (profileId) => diagnosticsApi.runL3(profileId),
-      runLogs: (profileId, lines) => diagnosticsApi.runLogs(profileId, lines)
+      runLogs: (profileId, lines) => diagnosticsApi.runLogs(profileId, lines),
+      startTechSupport: (profileId) => diagnosticsApi.startTechSupport(profileId),
+      getTechSupport: (profileId) => diagnosticsApi.getTechSupport(profileId)
     })
   } catch (err) {
     console.error('Failed to start the Agent Interface', err)
@@ -150,6 +158,7 @@ app.whenReady().then(async () => {
   registerWorkspaceCloseIpc()
 
   app.on('before-quit', () => {
+    diagnosticsApi.dispose()
     void mcp?.stop()
   })
 

@@ -16,8 +16,10 @@
     l2PanelView,
     l3PanelView,
     logsPanelView,
+    techSupportPanelView,
     type DiagnosticBlockId
   } from '../../shared/picos/diagnostics-panel'
+  import type { TechSupportSnapshot } from '../../shared/picos/tech-support'
   import type { ProfileSessionUi } from '../../shared/ssh-session-ui'
 
   let {
@@ -37,11 +39,13 @@
   let l2Loading = $state(false)
   let l3Loading = $state(false)
   let logsLoading = $state(false)
+  let techSupportLoading = $state(false)
   let deviceFactsRun = $state<DeviceFactsRun | null>(null)
   let interfaceStatusRun = $state<InterfaceStatusRun | null>(null)
   let l2Run = $state<L2Run | null>(null)
   let l3Run = $state<L3Run | null>(null)
   let logsRun = $state<LogsRun | null>(null)
+  let techSupportSnapshot = $state<TechSupportSnapshot | null>(null)
   let loadedDeviceFactsSessionId = $state<string | null>(null)
   let loadedInterfaceStatusKey = $state<string | null>(null)
   let loadedL2SessionId = $state<string | null>(null)
@@ -69,6 +73,9 @@
   const l2View = $derived(l2Run === null ? null : l2PanelView(l2Run))
   const l3View = $derived(l3Run === null ? null : l3PanelView(l3Run))
   const logsView = $derived(logsRun === null ? null : logsPanelView(logsRun))
+  const techSupportView = $derived(
+    techSupportSnapshot === null ? null : techSupportPanelView(techSupportSnapshot, { connected })
+  )
   const loading = $derived(
     selectedBlock === 'interface-status'
       ? interfaceStatusLoading
@@ -78,7 +85,9 @@
           ? l3Loading
           : selectedBlock === 'logs'
             ? logsLoading
-            : deviceFactsLoading
+            : selectedBlock === 'tech-support'
+              ? techSupportLoading
+              : deviceFactsLoading
   )
 
   function namesKey(names: string[]): string {
@@ -348,6 +357,55 @@
   function applyLogLines(): void {
     requestedLogLines = logLinesDraft
   }
+
+  async function refreshTechSupport(): Promise<void> {
+    techSupportSnapshot = await window.api.diagnostics.getTechSupport(profileId)
+  }
+
+  async function startTechSupport(): Promise<void> {
+    techSupportLoading = true
+    try {
+      const started = await window.api.diagnostics.startTechSupport(profileId)
+      if (started.kind === 'ok') {
+        techSupportSnapshot = started.snapshot
+      } else {
+        await refreshTechSupport()
+      }
+    } finally {
+      techSupportLoading = false
+    }
+  }
+
+  async function deleteTechSupportRemote(): Promise<void> {
+    techSupportLoading = true
+    try {
+      const deleted = await window.api.diagnostics.deleteTechSupportRemote(profileId)
+      if (deleted.kind === 'ok') {
+        techSupportSnapshot = deleted.snapshot
+      } else {
+        await refreshTechSupport()
+      }
+    } finally {
+      techSupportLoading = false
+    }
+  }
+
+  async function revealTechSupportArtifact(): Promise<void> {
+    await window.api.diagnostics.revealTechSupportArtifact(profileId)
+  }
+
+  $effect(() => {
+    if (collapsed || selectedBlock !== 'tech-support') {
+      return
+    }
+    void refreshTechSupport()
+    const timer = setInterval(() => {
+      void refreshTechSupport()
+    }, 1000)
+    return () => {
+      clearInterval(timer)
+    }
+  })
 </script>
 
 <section class="panel" class:collapsed>
@@ -374,7 +432,119 @@
 
   {#if !collapsed}
     <div class="body">
-      {#if !connected}
+      {#if selectedBlock === 'tech-support'}
+        {#if techSupportView === null || techSupportView.status === 'need-session'}
+          <p role="status">{techSupportView === null ? 'Loading…' : techSupportView.message}</p>
+        {:else if techSupportView.status === 'idle'}
+          <button
+            type="button"
+            onclick={startTechSupport}
+            disabled={techSupportLoading || !connected}
+          >
+            {techSupportView.startLabel}
+          </button>
+        {:else if techSupportView.status === 'in-progress'}
+          <h3>{techSupportView.phaseLabel}</h3>
+          {#if techSupportView.waitingForSession && techSupportView.waitingForSessionMessage}
+            <p class="muted">{techSupportView.waitingForSessionMessage}</p>
+          {/if}
+          <ol class="progress">
+            {#each techSupportView.progress as event, index (`${event.at}:${index}`)}
+              <li>
+                <time datetime={event.at}>{event.at}</time>
+                {event.message}
+              </li>
+            {/each}
+          </ol>
+        {:else if techSupportView.status === 'done'}
+          <h3>{techSupportView.phaseLabel}</h3>
+          <dl class="artifact">
+            <div>
+              <dt>文件名</dt>
+              <dd>{techSupportView.artifact.fileName}</dd>
+            </div>
+            <div>
+              <dt>大小</dt>
+              <dd>{techSupportView.artifact.byteSizeLabel}</dd>
+            </div>
+            <div>
+              <dt>保存位置</dt>
+              <dd>{techSupportView.artifact.localPath}</dd>
+            </div>
+          </dl>
+          {#if techSupportView.cleanupError}
+            <div class="notice channel" role="status">
+              <p>{techSupportView.cleanupError}</p>
+            </div>
+          {/if}
+          <ol class="progress">
+            {#each techSupportView.progress as event, index (`${event.at}:${index}`)}
+              <li>
+                <time datetime={event.at}>{event.at}</time>
+                {event.message}
+              </li>
+            {/each}
+          </ol>
+          <div class="toolbar">
+            <button type="button" onclick={revealTechSupportArtifact}>
+              {techSupportView.openDirectoryLabel}
+            </button>
+            {#if techSupportView.canDeleteRemote}
+              <button
+                type="button"
+                onclick={deleteTechSupportRemote}
+                disabled={techSupportLoading || !connected}
+              >
+                {techSupportView.deleteRemoteLabel}
+              </button>
+            {/if}
+            <button
+              type="button"
+              onclick={startTechSupport}
+              disabled={techSupportLoading || !connected}
+            >
+              {techSupportView.recollectLabel}
+            </button>
+          </div>
+        {:else if techSupportView.status === 'failed'}
+          <div class="notice channel" role="alert">
+            <p>{techSupportView.phaseLabel}</p>
+            <p>{techSupportView.message}</p>
+            {#if techSupportView.lastRemotePath}
+              <p class="muted">
+                {techSupportView.lastRemotePath}
+                {#if techSupportView.lastRemoteBytes !== null}
+                  · {techSupportView.lastRemoteBytes} 字节
+                {/if}
+                {#if techSupportView.lastProcessLabel}
+                  · {techSupportView.lastProcessLabel}
+                {/if}
+              </p>
+            {/if}
+            {#if techSupportView.artifact}
+              <p class="muted">
+                {techSupportView.artifact.fileName} · {techSupportView.artifact.byteSizeLabel} · {techSupportView
+                  .artifact.localPath}
+              </p>
+            {/if}
+          </div>
+          <ol class="progress">
+            {#each techSupportView.progress as event, index (`${event.at}:${index}`)}
+              <li>
+                <time datetime={event.at}>{event.at}</time>
+                {event.message}
+              </li>
+            {/each}
+          </ol>
+          <button
+            type="button"
+            onclick={startTechSupport}
+            disabled={techSupportLoading || !connected}
+          >
+            {techSupportView.recollectLabel}
+          </button>
+        {/if}
+      {:else if !connected}
         <p role="status">请先连接</p>
       {:else if selectedBlock === 'device-facts' && (deviceFactsView === null || deviceFactsView.status === 'need-session')}
         <p>{deviceFactsView === null ? 'Loading…' : deviceFactsView.message}</p>
@@ -1348,6 +1518,25 @@
   .detail {
     display: grid;
     gap: 8px;
+  }
+
+  .artifact {
+    display: grid;
+    gap: 8px;
+  }
+
+  .progress {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 6px;
+  }
+
+  .progress time {
+    display: block;
+    color: var(--muted);
+    font-size: 0.75rem;
   }
 
   dl {

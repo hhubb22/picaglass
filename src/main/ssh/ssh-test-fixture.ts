@@ -1,9 +1,9 @@
 import { execFileSync } from 'node:child_process'
-import { readFileSync, readdirSync } from 'node:fs'
+import { constants, readFileSync, readdirSync } from 'node:fs'
 import { createConnection, createServer, type Socket } from 'node:net'
 import { join } from 'node:path'
 import { vi } from 'vitest'
-import { Server } from 'ssh2'
+import { Server, type Session, type SFTPWrapper, utils as ssh2Utils } from 'ssh2'
 import { createSshApi, type SshApi, type SshDialogs, type SshSender } from './create-ssh-api'
 import { createSshEventInbox } from '../../shared/ssh-event-inbox'
 import {
@@ -35,6 +35,8 @@ export type TestExecResponse = {
   hang?: boolean
   reject?: boolean
 }
+
+export type TestSftpFiles = Record<string, Buffer | string>
 
 export type TestServer = {
   port: number
@@ -98,6 +100,110 @@ function replyExec(
   stream.close()
 }
 
+const { OPEN_MODE, STATUS_CODE } = ssh2Utils.sftp
+
+function fileBuffer(contents: Buffer | string): Buffer {
+  return typeof contents === 'string' ? Buffer.from(contents) : contents
+}
+
+function sftpAttrs(size: number): {
+  mode: number
+  uid: number
+  gid: number
+  size: number
+  atime: number
+  mtime: number
+} {
+  return {
+    mode: constants.S_IFREG | 0o644,
+    uid: 0,
+    gid: 0,
+    size,
+    atime: 0,
+    mtime: 0
+  }
+}
+
+function bindDownloadSftp(session: Session, files: TestSftpFiles): void {
+  session.on('sftp', (accept) => {
+    const sftp: SFTPWrapper = accept()
+    const openFiles = new Map<number, { path: string; data: Buffer }>()
+    let nextHandle = 1
+
+    const lookup = (path: string): Buffer | undefined => {
+      const contents = files[path]
+      if (contents === undefined) {
+        return undefined
+      }
+      return fileBuffer(contents)
+    }
+
+    sftp.on('OPEN', (reqid, filename, flags) => {
+      const data = lookup(filename)
+      if (data === undefined || (flags & OPEN_MODE.READ) === 0) {
+        sftp.status(reqid, STATUS_CODE.NO_SUCH_FILE)
+        return
+      }
+      const id = nextHandle
+      nextHandle += 1
+      const handle = Buffer.alloc(4)
+      handle.writeUInt32BE(id, 0)
+      openFiles.set(id, { path: filename, data })
+      sftp.handle(reqid, handle)
+    })
+    sftp.on('READ', (reqid, handle, offset, length) => {
+      if (handle.length !== 4) {
+        sftp.status(reqid, STATUS_CODE.FAILURE)
+        return
+      }
+      const opened = openFiles.get(handle.readUInt32BE(0))
+      if (opened === undefined) {
+        sftp.status(reqid, STATUS_CODE.FAILURE)
+        return
+      }
+      if (offset >= opened.data.length) {
+        sftp.status(reqid, STATUS_CODE.EOF)
+        return
+      }
+      const end = Math.min(offset + length, opened.data.length)
+      sftp.data(reqid, opened.data.subarray(offset, end))
+    })
+    sftp.on('CLOSE', (reqid, handle) => {
+      if (handle.length === 4) {
+        openFiles.delete(handle.readUInt32BE(0))
+      }
+      sftp.status(reqid, STATUS_CODE.OK)
+    })
+    const onStat = (reqid: number, path: string): void => {
+      const data = lookup(path)
+      if (data === undefined) {
+        sftp.status(reqid, STATUS_CODE.NO_SUCH_FILE)
+        return
+      }
+      sftp.attrs(reqid, sftpAttrs(data.length))
+    }
+    sftp.on('STAT', onStat)
+    sftp.on('LSTAT', onStat)
+    sftp.on('FSTAT', (reqid, handle) => {
+      if (handle.length !== 4) {
+        sftp.status(reqid, STATUS_CODE.FAILURE)
+        return
+      }
+      const opened = openFiles.get(handle.readUInt32BE(0))
+      if (opened === undefined) {
+        sftp.status(reqid, STATUS_CODE.FAILURE)
+        return
+      }
+      sftp.attrs(reqid, sftpAttrs(opened.data.length))
+    })
+    sftp.on('REALPATH', (reqid, path) => {
+      const data = lookup(path)
+      const attrs = sftpAttrs(data?.length ?? 0)
+      sftp.name(reqid, [{ filename: path, longname: path, attrs }])
+    })
+  })
+}
+
 export async function startServer(
   hostKeyPem: string,
   opts?: {
@@ -105,6 +211,7 @@ export async function startServer(
     stallShell?: boolean
     port?: number
     exec?: (command: string) => TestExecResponse
+    sftp?: TestSftpFiles
   }
 ): Promise<TestServer> {
   let shells = 0
@@ -186,6 +293,9 @@ export async function startServer(
           }
           replyExec(stream, response)
         })
+        if (opts?.sftp !== undefined) {
+          bindDownloadSftp(session, opts.sftp)
+        }
       })
     })
   })

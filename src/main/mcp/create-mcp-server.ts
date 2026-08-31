@@ -28,6 +28,11 @@ import type {
 import type { L2ChannelFailure, L2Run } from '../../shared/picos/l2'
 import type { L3ChannelFailure, L3Run } from '../../shared/picos/l3'
 import type { LogsChannelFailure, LogsRun } from '../../shared/picos/logs'
+import {
+  isTechSupportInFlight,
+  type TechSupportSnapshot,
+  type TechSupportStartResult
+} from '../../shared/picos/tech-support'
 
 export type McpProfileListing = {
   id: string
@@ -46,6 +51,8 @@ export type CreateMcpServerDeps = {
   runL2: (profileId: string) => Promise<L2Run>
   runL3: (profileId: string) => Promise<L3Run>
   runLogs: (profileId: string, lines?: number) => Promise<LogsRun>
+  startTechSupport: (profileId: string) => Promise<TechSupportStartResult>
+  getTechSupport: (profileId: string) => TechSupportSnapshot
   now?: () => Date
   createToken?: () => string
 }
@@ -218,6 +225,36 @@ function channelErrorText(
     return `${message}\n${run.stderrHead}`
   }
   return message
+}
+
+function projectTechSupport(snapshot: TechSupportSnapshot, profile: McpProfileListing): unknown {
+  return {
+    profile: { id: profile.id, label: profile.label },
+    handle: snapshot.taskId,
+    phase: snapshot.phase,
+    progress: snapshot.progress.map((event) => ({
+      at: event.at,
+      phase: event.phase,
+      message: event.message
+    })),
+    artifact:
+      snapshot.artifact === null
+        ? null
+        : {
+            fileName: snapshot.artifact.fileName,
+            byteSize: snapshot.artifact.byteSize,
+            localPath: snapshot.artifact.localPath,
+            remoteDeleted: snapshot.artifact.remoteDeleted
+          },
+    failure: snapshot.failure,
+    lastKnown: {
+      remotePath: snapshot.lastRemotePath,
+      remoteBytes: snapshot.lastRemoteBytes,
+      processRunning: snapshot.lastProcessRunning
+    },
+    waitingForSession: snapshot.waitingForSession,
+    cleanupError: snapshot.cleanupError
+  }
 }
 
 function resolveProfile(
@@ -501,6 +538,53 @@ function registerTools(server: McpServer, deps: CreateMcpServerDeps): void {
         syslog: projectResult(run.block.syslog, withRaw),
         core: projectResult(run.block.core, withRaw)
       })
+    }
+  )
+
+  server.registerTool(
+    'picos_collect_tech_support',
+    {
+      title: 'Collect tech_support',
+      description:
+        'Start or query a tech_support collection for a Connection Profile. This is a long-running task: the first call returns a handle while collection continues on the device (nohup, survives SSH Session drop). Call again with the same profile (or handle) to poll status and the result. Pass restart=true to collect again after done or failed. The device-side copy is deleted after a successful pull; that write is not exposed to run_show.',
+      inputSchema: {
+        profile: z.string().min(1).describe('Connection Profile id or Profile Label'),
+        handle: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Task handle from a previous call; when set, only query status'),
+        restart: z
+          .boolean()
+          .optional()
+          .describe('When true, start a new collection if the previous one is done or failed')
+      }
+    },
+    async ({ profile, handle, restart }) => {
+      const profiles = await deps.listProfiles()
+      const resolved = resolveProfile(profiles, profile)
+      if (!resolved.ok) {
+        return mcpToolError(resolved.message)
+      }
+      const current = deps.getTechSupport(resolved.profile.id)
+      if (handle !== undefined) {
+        if (current.taskId !== handle) {
+          return mcpToolError(`Unknown tech_support handle: ${handle}`)
+        }
+        return mcpText(projectTechSupport(current, resolved.profile))
+      }
+      const inFlight = isTechSupportInFlight(current.phase)
+      if (!inFlight && (current.phase === 'idle' || restart === true)) {
+        if (!deps.hasLiveSession(resolved.profile.id)) {
+          return noSessionError(resolved.profile.label)
+        }
+        const started = await deps.startTechSupport(resolved.profile.id)
+        if (started.kind === 'no-session') {
+          return noSessionError(resolved.profile.label)
+        }
+        return mcpText(projectTechSupport(started.snapshot, resolved.profile))
+      }
+      return mcpText(projectTechSupport(current, resolved.profile))
     }
   )
 }

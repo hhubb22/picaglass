@@ -86,7 +86,13 @@ const api: RendererApi = {
       ipcRenderer.invoke('diagnostics:runInterfaceStatus', profileId, interfaces),
     runL2: (profileId) => ipcRenderer.invoke('diagnostics:runL2', profileId),
     runL3: (profileId) => ipcRenderer.invoke('diagnostics:runL3', profileId),
-    runLogs: (profileId, lines) => ipcRenderer.invoke('diagnostics:runLogs', profileId, lines)
+    runLogs: (profileId, lines) => ipcRenderer.invoke('diagnostics:runLogs', profileId, lines),
+    startTechSupport: (profileId) => ipcRenderer.invoke('diagnostics:startTechSupport', profileId),
+    getTechSupport: (profileId) => ipcRenderer.invoke('diagnostics:getTechSupport', profileId),
+    deleteTechSupportRemote: (profileId) =>
+      ipcRenderer.invoke('diagnostics:deleteTechSupportRemote', profileId),
+    revealTechSupportArtifact: (profileId) =>
+      ipcRenderer.invoke('diagnostics:revealTechSupportArtifact', profileId)
   },
   mcp: {
     getConfig: () => ipcRenderer.invoke('mcp:getConfig')
