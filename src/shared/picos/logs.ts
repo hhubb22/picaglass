@@ -11,9 +11,11 @@ export function logsSyslogCommand(lines: number): string {
   return `show log last ${String(lines)}`
 }
 
-export type ParseLogLines = { ok: true; lines: number } | { ok: false; reason: string }
+export type ParseLogLineCount = { ok: true; lines: number } | { ok: false; reason: string }
 
-export function parseLogLines(value: number | undefined = DEFAULT_LOG_LINES): ParseLogLines {
+export function parseLogLineCount(
+  value: number | undefined = DEFAULT_LOG_LINES
+): ParseLogLineCount {
   if (value === undefined) {
     return { ok: true, lines: DEFAULT_LOG_LINES }
   }
@@ -27,7 +29,7 @@ export type LogsCliCommand =
   { ok: true; lines: number; command: string } | { ok: false; reason: string }
 
 export function logsCliCommand(lines: number | undefined = DEFAULT_LOG_LINES): LogsCliCommand {
-  const parsed = parseLogLines(lines)
+  const parsed = parseLogLineCount(lines)
   if (!parsed.ok) {
     return parsed
   }

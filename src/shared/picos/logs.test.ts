@@ -9,7 +9,7 @@ import {
   logsCliCommand,
   logsSyslogCommand,
   parseCoreListing,
-  parseLogLines,
+  parseLogLineCount,
   parseLogs,
   parseSyslog
 } from './logs'
@@ -43,10 +43,10 @@ describe('logs commands', () => {
   })
 
   it('rejects a non-positive, non-integer, or oversized line count', () => {
-    expect(parseLogLines(0)).toEqual({ ok: false, reason: 'invalid log line count: 0' })
-    expect(parseLogLines(-1)).toEqual({ ok: false, reason: 'invalid log line count: -1' })
-    expect(parseLogLines(1.5)).toEqual({ ok: false, reason: 'invalid log line count: 1.5' })
-    expect(parseLogLines(10001)).toEqual({ ok: false, reason: 'invalid log line count: 10001' })
+    expect(parseLogLineCount(0)).toEqual({ ok: false, reason: 'invalid log line count: 0' })
+    expect(parseLogLineCount(-1)).toEqual({ ok: false, reason: 'invalid log line count: -1' })
+    expect(parseLogLineCount(1.5)).toEqual({ ok: false, reason: 'invalid log line count: 1.5' })
+    expect(parseLogLineCount(10001)).toEqual({ ok: false, reason: 'invalid log line count: 10001' })
     expect(logsCliCommand(0)).toEqual({ ok: false, reason: 'invalid log line count: 0' })
   })
 })
