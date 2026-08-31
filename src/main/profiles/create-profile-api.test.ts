@@ -8,6 +8,18 @@ const WORKSPACE_DIR = 'workspace'
 const PRIMARY = join(WORKSPACE_DIR, 'workspace.json')
 const BACKUP = join(WORKSPACE_DIR, 'workspace.json.bak')
 
+const SEEDED_ATTEMPT = {
+  startedAt: '2026-01-01T00:00:00.000Z',
+  endedAt: '2026-01-01T00:01:00.000Z',
+  outcome: 'remote-session-ended' as const
+}
+
+const SEEDED_CANCELED = {
+  startedAt: '2026-01-01T00:02:00.000Z',
+  endedAt: '2026-01-01T00:02:01.000Z',
+  outcome: 'canceled' as const
+}
+
 function passwordDraft(overrides?: {
   displayName?: string
   host?: string
@@ -172,7 +184,7 @@ describe('createProfileApi', () => {
       throw new Error('expected a selected profile')
     }
     seeded.latestSnapshots[originalId] = { hostname: 'db' }
-    seeded.latestAttempts[originalId] = { outcome: 'remote-ended' }
+    seeded.latestAttempts[originalId] = SEEDED_ATTEMPT
     await writeFile(primary, `${JSON.stringify(seeded, null, 2)}\n`)
 
     api = createProfileApi({ userDataPath: dir })
@@ -204,7 +216,7 @@ describe('createProfileApi', () => {
       throw new Error('expected the duplicate to be selected')
     }
     expect(document.latestSnapshots[originalId]).toEqual({ hostname: 'db' })
-    expect(document.latestAttempts[originalId]).toEqual({ outcome: 'remote-ended' })
+    expect(document.latestAttempts[originalId]).toEqual(SEEDED_ATTEMPT)
     expect(document.latestSnapshots[duplicateId]).toBeUndefined()
     expect(document.latestAttempts[duplicateId]).toBeUndefined()
   })
@@ -454,7 +466,7 @@ describe('createProfileApi update, delete, and replacePrivateKey', () => {
       throw new Error('expected create to succeed')
     }
     const profileId = created.workspace.selectedProfileId
-    await seedFacts(dir, profileId, { hostname: 'db' }, { outcome: 'remote-ended' })
+    await seedFacts(dir, profileId, { hostname: 'db' }, SEEDED_ATTEMPT)
     api = createProfileApi({ userDataPath: dir })
 
     const updated = await api.update({
@@ -487,7 +499,7 @@ describe('createProfileApi update, delete, and replacePrivateKey', () => {
       throw new Error('expected create to succeed')
     }
     const profileId = created.workspace.selectedProfileId
-    await seedFacts(dir, profileId, { hostname: 'db' }, { outcome: 'remote-ended' })
+    await seedFacts(dir, profileId, { hostname: 'db' }, SEEDED_ATTEMPT)
     api = createProfileApi({ userDataPath: dir })
 
     const updated = await api.update({
@@ -514,7 +526,7 @@ describe('createProfileApi update, delete, and replacePrivateKey', () => {
       throw new Error('expected create to succeed')
     }
     const profileId = created.workspace.selectedProfileId
-    await seedFacts(dir, profileId, { hostname: 'db' }, { outcome: 'remote-ended' })
+    await seedFacts(dir, profileId, { hostname: 'db' }, SEEDED_ATTEMPT)
     api = createProfileApi({ userDataPath: dir })
 
     const updated = await api.update({
@@ -539,7 +551,7 @@ describe('createProfileApi update, delete, and replacePrivateKey', () => {
       throw new Error('expected create to succeed')
     }
     const profileId = created.workspace.selectedProfileId
-    await seedFacts(dir, profileId, { hostname: 'db' }, { outcome: 'remote-ended' })
+    await seedFacts(dir, profileId, { hostname: 'db' }, SEEDED_ATTEMPT)
     api = createProfileApi({ userDataPath: dir })
 
     const updated = await api.update({
@@ -561,7 +573,7 @@ describe('createProfileApi update, delete, and replacePrivateKey', () => {
     })
     const document = await readDocument(dir)
     expect(document.latestSnapshots[profileId]).toEqual({ hostname: 'db' })
-    expect(document.latestAttempts[profileId]).toEqual({ outcome: 'remote-ended' })
+    expect(document.latestAttempts[profileId]).toEqual(SEEDED_ATTEMPT)
   })
 
   it('rejects host, port, username, and Authentication Method edits while an SSH Session is occupied and still allows display-name edits', async () => {
@@ -695,15 +707,15 @@ describe('createProfileApi update, delete, and replacePrivateKey', () => {
     if (keepId === null || goneId === null) {
       throw new Error('expected ids')
     }
-    await seedFacts(dir, keepId, { hostname: 'keep' }, { outcome: 'remote-ended' })
-    await seedFacts(dir, goneId, { hostname: 'gone' }, { outcome: 'canceled' })
+    await seedFacts(dir, keepId, { hostname: 'keep' }, SEEDED_ATTEMPT)
+    await seedFacts(dir, goneId, { hostname: 'gone' }, SEEDED_CANCELED)
     api = createProfileApi({ userDataPath: dir })
 
     const deleted = await api.delete(goneId)
     expect(deleted.ok).toBe(true)
     const document = await readDocument(dir)
     expect(document.latestSnapshots[keepId]).toEqual({ hostname: 'keep' })
-    expect(document.latestAttempts[keepId]).toEqual({ outcome: 'remote-ended' })
+    expect(document.latestAttempts[keepId]).toEqual(SEEDED_ATTEMPT)
     expect(document.latestSnapshots[goneId]).toBeUndefined()
     expect(document.latestAttempts[goneId]).toBeUndefined()
     expect(document.profiles.map((profile) => profile.displayName)).toEqual(['keep'])

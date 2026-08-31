@@ -14,6 +14,10 @@ import type {
   SshProfileConnectRequest,
   SshSecretRequirement
 } from '../../shared/ssh'
+import type {
+  ConnectionAttemptOutcome,
+  ConnectionAttemptSummary
+} from '../../shared/connection-attempt'
 
 export type SshSender = { id: number }
 
@@ -39,6 +43,8 @@ export type CreateSshApiDeps = {
   emitTo: (senderId: number, channel: string, payload: unknown) => void
   authTimeoutMs?: number
   resolveProfile?: (profileId: string) => Promise<ResolvedProfile | undefined>
+  now?: () => Date
+  recordAttempt?: (profileId: string, summary: ConnectionAttemptSummary) => Promise<void>
 }
 
 export type SshApi = {
@@ -93,6 +99,10 @@ type SshSession = {
   pendingTrust: 'unknown' | 'changed' | undefined
   confirming: boolean
   ended: boolean
+  attemptStartedAt: string
+  attemptConnectedAt: string | undefined
+  attemptFinalized: boolean
+  operatorDisconnect: boolean
 }
 
 function invalid(message: string): { ok: false; reason: 'invalid'; message: string } {
@@ -344,6 +354,67 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
   >()
   const authTimeoutMs = deps.authTimeoutMs ?? 20_000
 
+  function isoNow(): string {
+    return (deps.now?.() ?? new Date()).toISOString()
+  }
+
+  function attemptSnapshot(
+    session: SshSession,
+    extra: { ended?: boolean; outcome?: ConnectionAttemptOutcome }
+  ): ConnectionAttemptSummary {
+    const summary: ConnectionAttemptSummary = { startedAt: session.attemptStartedAt }
+    if (session.attemptConnectedAt !== undefined) {
+      summary.connectedAt = session.attemptConnectedAt
+    }
+    if (extra.ended === true) {
+      summary.endedAt = isoNow()
+    }
+    if (extra.outcome !== undefined) {
+      summary.outcome = extra.outcome
+    }
+    return summary
+  }
+
+  async function persistAttempt(
+    session: SshSession,
+    summary: ConnectionAttemptSummary
+  ): Promise<void> {
+    if (deps.recordAttempt === undefined) {
+      return
+    }
+    try {
+      await deps.recordAttempt(session.profileId, summary)
+    } catch {
+      // Persistence is best-effort: a failed write must not drop or block the SSH Session.
+    }
+  }
+
+  async function finalizeAttempt(
+    session: SshSession,
+    outcome: ConnectionAttemptOutcome
+  ): Promise<void> {
+    if (session.attemptFinalized) {
+      return
+    }
+    session.attemptFinalized = true
+    await persistAttempt(session, attemptSnapshot(session, { ended: true, outcome }))
+  }
+
+  function outcomeFromHandshakeFailure(
+    reason: 'auth-failed' | 'network' | 'timeout' | 'canceled'
+  ): ConnectionAttemptOutcome {
+    if (reason === 'auth-failed') {
+      return 'authentication-failed'
+    }
+    if (reason === 'timeout') {
+      return 'timed-out'
+    }
+    if (reason === 'canceled') {
+      return 'canceled'
+    }
+    return 'network-failed'
+  }
+
   function endpointKey(host: string, port: number): string {
     return `${host}\n${port}`
   }
@@ -401,13 +472,20 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
       return
     }
     session.clearAuthTimeout()
-    const closed: SshReady & { ok: false } = {
-      ok: false,
-      reason: 'network',
-      message: 'connection closed'
+    // A live shell without a recorded end stays on disk so launch recovery can
+    // mark it interrupted. Handshake failures already finalized their outcome.
+    if (!session.attemptFinalized && session.stream !== undefined) {
+      session.attemptFinalized = true
     }
-    session.settleOpen?.(closed)
-    session.failHandshake?.(closed)
+    if (!session.attemptFinalized) {
+      const closed: SshReady & { ok: false } = {
+        ok: false,
+        reason: 'network',
+        message: 'connection closed'
+      }
+      session.settleOpen?.(closed)
+      session.failHandshake?.(closed)
+    }
     try {
       if (session.verify !== undefined) {
         session.verify(false)
@@ -448,19 +526,26 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
       return
     }
     session.ended = true
-    if (outcome.type === 'error') {
+    const attemptOutcome: ConnectionAttemptOutcome = session.operatorDisconnect
+      ? 'operator-disconnected'
+      : outcome.type === 'error'
+        ? 'network-failed'
+        : 'remote-session-ended'
+    void finalizeAttempt(session, attemptOutcome).finally(() => {
+      if (outcome.type === 'error') {
+        deps.emitTo(session.senderId, 'ssh:status', {
+          sessionId,
+          profileId: session.profileId,
+          type: 'error',
+          message: outcome.message
+        })
+        return
+      }
       deps.emitTo(session.senderId, 'ssh:status', {
         sessionId,
         profileId: session.profileId,
-        type: 'error',
-        message: outcome.message
+        type: 'closed'
       })
-      return
-    }
-    deps.emitTo(session.senderId, 'ssh:status', {
-      sessionId,
-      profileId: session.profileId,
-      type: 'closed'
     })
   }
 
@@ -495,7 +580,9 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
               }
               if (err) {
                 session.clearAuthTimeout()
-                finish({ ok: false, reason: 'network', message: err.message })
+                void finalizeAttempt(session, 'network-failed').finally(() => {
+                  finish({ ok: false, reason: 'network', message: err.message })
+                })
                 dropSession(sessionId)
                 return
               }
@@ -515,18 +602,23 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
                 endSession(sessionId, session, { type: 'closed' })
                 dropSession(sessionId)
               })
-              deps.emitTo(session.senderId, 'ssh:status', {
-                sessionId,
-                profileId: session.profileId,
-                type: 'connected'
+              session.attemptConnectedAt = isoNow()
+              void persistAttempt(session, attemptSnapshot(session, {})).finally(() => {
+                deps.emitTo(session.senderId, 'ssh:status', {
+                  sessionId,
+                  profileId: session.profileId,
+                  type: 'connected'
+                })
+                finish({ ok: true, sessionId })
               })
-              finish({ ok: true, sessionId })
             }
           )
         } catch (err) {
           session.clearAuthTimeout()
           const message = err instanceof Error ? err.message : 'cannot open shell'
-          finish({ ok: false, reason: 'network', message })
+          void finalizeAttempt(session, 'network-failed').finally(() => {
+            finish({ ok: false, reason: 'network', message })
+          })
           dropSession(sessionId)
         }
       })
@@ -701,7 +793,11 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
         failHandshake: undefined,
         pendingTrust: undefined,
         confirming: false,
-        ended: false
+        ended: false,
+        attemptStartedAt: isoNow(),
+        attemptConnectedAt: undefined,
+        attemptFinalized: false,
+        operatorDisconnect: false
       }
       sessions.set(sessionId, session)
       sessionByProfile.set(parsed.profileId, sessionId)
@@ -741,7 +837,9 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
             }
             settleReady(failed)
             session.settleOpen?.(failed)
-            settle(failed)
+            void finalizeAttempt(session, 'timed-out').finally(() => {
+              settle(failed)
+            })
             dropSession(sessionId)
           }, authTimeoutMs)
         }
@@ -754,10 +852,19 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
         client.on('error', (err: Error) => {
           session.clearAuthTimeout()
           const failed = sshClientFailure(err)
-          endSession(sessionId, session, { type: 'error', message: failed.message })
+          if (session.stream !== undefined) {
+            endSession(sessionId, session, { type: 'error', message: failed.message })
+            settleReady(failed)
+            session.settleOpen?.(failed)
+            settle(failed)
+            dropSession(sessionId)
+            return
+          }
           settleReady(failed)
           session.settleOpen?.(failed)
-          settle(failed)
+          void finalizeAttempt(session, outcomeFromHandshakeFailure(failed.reason)).finally(() => {
+            settle(failed)
+          })
           dropSession(sessionId)
         })
         client.on('close', () => {
@@ -769,8 +876,14 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
           }
           settleReady(failed)
           session.settleOpen?.(failed)
+          if (session.stream === undefined && !session.attemptFinalized) {
+            void finalizeAttempt(session, 'network-failed').finally(() => {
+              settle(failed)
+            })
+          } else if (!session.attemptFinalized) {
+            settle(failed)
+          }
           dropSession(sessionId)
-          settle(failed)
         })
 
         const pauseHostTrust = (
@@ -842,7 +955,9 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
         } catch (err) {
           session.clearAuthTimeout()
           const message = err instanceof Error ? err.message : 'cannot connect'
-          settle({ ok: false, reason: 'network', message })
+          void finalizeAttempt(session, 'network-failed').finally(() => {
+            settle({ ok: false, reason: 'network', message })
+          })
           dropSession(sessionId)
         }
       })
@@ -854,6 +969,9 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
         return invalid('unknown session')
       }
       if (action === 'abort') {
+        const outcome: ConnectionAttemptOutcome =
+          session.pendingTrust === 'changed' ? 'host-key-rejected' : 'canceled'
+        await finalizeAttempt(session, outcome)
         dropSession(sessionId)
         return { ok: false, reason: 'canceled', message: 'canceled' }
       }
@@ -983,6 +1101,10 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
       if (session === undefined || session.senderId !== sender.id) {
         return
       }
+      session.operatorDisconnect = true
+      if (session.stream !== undefined) {
+        await finalizeAttempt(session, 'operator-disconnected')
+      }
       dropSession(sessionId)
     },
 
@@ -1003,6 +1125,7 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
         reason: 'canceled',
         message: 'canceled'
       }
+      await finalizeAttempt(session, 'canceled')
       session.settleOpen?.(canceled)
       session.failHandshake?.(canceled)
       dropSession(sessionId)
@@ -1016,6 +1139,15 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
       const sessionId = sessionByProfile.get(profileId.trim())
       if (sessionId === undefined) {
         return
+      }
+      const session = sessions.get(sessionId)
+      if (session !== undefined) {
+        if (session.stream !== undefined) {
+          session.operatorDisconnect = true
+          void finalizeAttempt(session, 'operator-disconnected')
+        } else {
+          void finalizeAttempt(session, 'canceled')
+        }
       }
       dropSession(sessionId)
     },

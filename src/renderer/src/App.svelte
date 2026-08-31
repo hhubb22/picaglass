@@ -28,12 +28,16 @@
     beginDisconnect,
     cancelSecretPrompt,
     connectionFieldsLocked,
+    dismissSessionFailure,
     emptyProfileSession,
+    markAttemptFailureViewed,
     promptForSecret,
     submitSecret,
+    withAttemptFailure,
     type ProfileSessionUi
   } from '../../shared/ssh-session-ui'
-  import type { HostTrustState, SshHostKeyAction } from '../../shared/ssh'
+  import { ATTEMPT_OUTCOME_LABEL } from '../../shared/connection-attempt'
+  import type { HostTrustState, SshConnectResult, SshHostKeyAction } from '../../shared/ssh'
   import {
     HOST_TRUST_ACTION_LABEL,
     changedHostPrompt,
@@ -178,6 +182,46 @@
     sessions[profileId] = next
   }
 
+  function isOnScreen(profileId: string): boolean {
+    // The failure banner lives on Overview. Terminal of the same profile has not viewed it.
+    return (
+      pane === 'profile' &&
+      workspace.selectedProfileId === profileId &&
+      (tabs[profileId] ?? defaultTab()) === 'overview'
+    )
+  }
+
+  function applySessionUi(
+    profileId: string,
+    next: ProfileSessionUi,
+    detail: string | null = next.error
+  ): void {
+    setSession(profileId, withAttemptFailure(next, isOnScreen(profileId), detail))
+  }
+
+  function connectFailureDetail(result: SshConnectResult, next: ProfileSessionUi): string | null {
+    return !result.ok && 'message' in result ? result.message : next.error
+  }
+
+  async function refreshAttempts(): Promise<void> {
+    workspace = await window.api.profiles.load()
+  }
+
+  function dismissFailure(profileId: string): void {
+    setSession(profileId, dismissSessionFailure(sessionOf(profileId)))
+  }
+
+  function viewFailureIfOverview(profileId: string): void {
+    if (!isOnScreen(profileId)) {
+      return
+    }
+    const current = sessionOf(profileId)
+    if (!current.unseenFailure) {
+      return
+    }
+    setSession(profileId, markAttemptFailureViewed(current))
+  }
+
   function ensureTerminalId(profileId: string): void {
     if (!terminalIds.includes(profileId)) {
       terminalIds = [...terminalIds, profileId]
@@ -268,6 +312,7 @@
         const tab = tabWhenSelectingProfile(tabs[profileId], deferredTerminal[profileId] === true)
         tabs[profileId] = tab
         deferredTerminal[profileId] = false
+        viewFailureIfOverview(profileId)
         const profile = workspace.profiles.find((item) => item.id === profileId)
         if (profile !== undefined) {
           await refreshHostTrust(profile.host, profile.port)
@@ -289,6 +334,9 @@
       return
     }
     tabs[selected.id] = tab
+    if (tab === 'overview') {
+      viewFailureIfOverview(selected.id)
+    }
     if (tab === 'terminal') {
       ensureTerminalId(selected.id)
       void tick().then(() => {
@@ -332,7 +380,7 @@
   async function runConnect(profileId: string, secret?: string): Promise<void> {
     const origin = focusContext(profileId)
     const previous = sessionOf(profileId).lastOutcome
-    setSession(profileId, {
+    applySessionUi(profileId, {
       ...sessionOf(profileId),
       state: 'connecting',
       secretPrompt: null,
@@ -340,7 +388,11 @@
     })
     ensureTerminalId(profileId)
     await tick()
-    const nextTranscript = beginAttempt(transcripts[profileId] ?? [], new Date(), previous)
+    const nextTranscript = beginAttempt(
+      transcripts[profileId] ?? [],
+      new Date(),
+      previous === null ? null : ATTEMPT_OUTCOME_LABEL[previous]
+    )
     transcripts[profileId] = nextTranscript
     const separator = nextTranscript[nextTranscript.length - 1]
     if (separator !== undefined && separator.source === 'local' && separator.kind === 'separator') {
@@ -354,8 +406,8 @@
       rows: size?.rows ?? 24
     })
     const next = applyConnectResult(sessionOf(profileId), result)
-    setSession(profileId, next)
-    await refreshSelectedTrust()
+    applySessionUi(profileId, next, connectFailureDetail(result, next))
+    await refreshAttempts()
     if (next.sessionId !== null) {
       registry.setWritable(profileId, next.sessionId)
     }
@@ -383,7 +435,8 @@
     replaceConfirm = false
     const result = await window.api.ssh.confirmHostKey(pending.sessionId, action)
     const next = applyConnectResult({ ...sessionOf(profileId), state: 'connecting' }, result)
-    setSession(profileId, next)
+    applySessionUi(profileId, next, connectFailureDetail(result, next))
+    await refreshAttempts()
     await refreshSelectedTrust()
     if (next.sessionId !== null) {
       registry.setWritable(profileId, next.sessionId)
@@ -410,7 +463,9 @@
     }
     replaceConfirm = false
     const result = await window.api.ssh.confirmHostKey(pending.sessionId, 'abort')
-    setSession(profileId, applyConnectResult(sessionOf(profileId), result))
+    const next = applyConnectResult(sessionOf(profileId), result)
+    applySessionUi(profileId, next, connectFailureDetail(result, next))
+    await refreshAttempts()
     await refreshSelectedTrust()
   }
 
@@ -441,8 +496,12 @@
     registry.setWritable(profileId, null)
     await window.api.ssh.disconnect(sessionId)
     if (sessionOf(profileId).state === 'disconnecting') {
-      setSession(profileId, applySessionStatus(sessionOf(profileId), { sessionId, type: 'closed' }))
+      applySessionUi(
+        profileId,
+        applySessionStatus(sessionOf(profileId), { sessionId, type: 'closed' })
+      )
     }
+    await refreshAttempts()
     await refreshSelectedTrust()
   }
 
@@ -470,6 +529,7 @@
       if (result.ok) {
         resetDraft()
         pane = 'profile'
+        viewFailureIfOverview(selected.id)
         return
       }
       if (result.reason === 'duplicate') {
@@ -599,6 +659,9 @@
     resetDraft()
     const selectedId = workspace.selectedProfileId
     pane = selectedId === null ? 'empty' : 'profile'
+    if (selectedId !== null) {
+      viewFailureIfOverview(selectedId)
+    }
     if (selectedId !== null && deferredTerminal[selectedId] === true) {
       tabs[selectedId] = tabWhenSelectingProfile(tabs[selectedId], true)
       deferredTerminal[selectedId] = false
@@ -652,7 +715,8 @@
       }
       const previous = sessionOf(profileId)
       const next = applySessionStatus(previous, event)
-      setSession(profileId, next)
+      const detail = event.type === 'error' ? (event.message ?? next.error) : next.error
+      applySessionUi(profileId, next, detail)
       if (event.type === 'closed' || event.type === 'error') {
         registry.setWritable(profileId, null)
         transcripts[profileId] = endSession(
@@ -663,6 +727,7 @@
         if (ended !== undefined && ended.source === 'local' && ended.kind === 'ended') {
           registry.writeLocal(profileId, ended.message)
         }
+        void refreshAttempts()
         void refreshSelectedTrust()
       }
     })
@@ -750,6 +815,7 @@
           onForgetHostKey={() => {
             forgetConfirm = true
           }}
+          onDismissFailure={() => dismissFailure(selected.id)}
         />
       </div>
     {/if}

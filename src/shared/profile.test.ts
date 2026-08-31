@@ -481,7 +481,8 @@ describe('draftFromProfile and isProfileEditDirty', () => {
     port: 22,
     username: 'deploy',
     auth: { method: 'password' as const },
-    automaticDiscovery: true
+    automaticDiscovery: true,
+    lastAttempt: null
   }
 
   it('loads an edit draft from the saved Connection Profile', () => {

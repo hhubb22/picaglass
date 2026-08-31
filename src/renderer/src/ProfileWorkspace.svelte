@@ -9,6 +9,10 @@
   import type { TranscriptEntry } from '../../shared/terminal-transcript'
   import type { HostTrustState } from '../../shared/ssh'
   import { hostTrustCard, HOST_TRUST_ACTION_LABEL } from '../../shared/host-trust-ui'
+  import {
+    ATTEMPT_OUTCOME_LABEL,
+    type ConnectionAttemptSummary
+  } from '../../shared/connection-attempt'
   import type { TerminalRegistry } from './terminal-registry'
   import ProfileTerminalHost from './ProfileTerminalHost.svelte'
 
@@ -26,7 +30,8 @@
     onClearTerminal,
     onEdit,
     onDelete,
-    onForgetHostKey
+    onForgetHostKey,
+    onDismissFailure
   }: {
     profile: RendererProfile
     tab: WorkspaceTab
@@ -42,6 +47,7 @@
     onEdit: () => void
     onDelete: () => void
     onForgetHostKey: () => void
+    onDismissFailure: () => void
   } = $props()
 
   const authSummary = $derived(
@@ -53,6 +59,22 @@
   const canConnect = $derived(idle && session.secretPrompt === null && !session.missingPrivateKey)
   const canDisconnect = $derived(session.state === 'connected')
   const trustCard = $derived(hostTrustCard(hostTrust))
+  const lastAttempt = $derived(profile.lastAttempt)
+
+  function formatAttemptTime(iso: string): string {
+    return new Date(iso).toLocaleString()
+  }
+
+  function attemptValue(
+    attempt: ConnectionAttemptSummary,
+    field: 'connectedAt' | 'endedAt' | 'outcome'
+  ): string {
+    if (field === 'outcome') {
+      return attempt.outcome === undefined ? '—' : ATTEMPT_OUTCOME_LABEL[attempt.outcome]
+    }
+    const value = attempt[field]
+    return value === undefined ? '—' : formatAttemptTime(value)
+  }
 </script>
 
 <section class="workspace">
@@ -66,6 +88,20 @@
   </nav>
 
   <div class="overview" class:hidden={tab !== 'overview'}>
+    {#if session.failureBanner !== null}
+      <div class="failure-banner" role="alert">
+        <p>
+          {ATTEMPT_OUTCOME_LABEL[session.failureBanner.outcome]}
+        </p>
+        {#if session.failureBanner.detail !== null && session.failureBanner.detail.length > 0}
+          <details>
+            <summary>Technical details</summary>
+            <p>{session.failureBanner.detail}</p>
+          </details>
+        {/if}
+        <button type="button" onclick={onDismissFailure}>Dismiss</button>
+      </div>
+    {/if}
     <div class="header">
       <h1>{profile.label}</h1>
       <div class="rail">
@@ -79,7 +115,7 @@
         <span class="indicator {indicator}" aria-hidden="true"></span>
         <span>{SESSION_STATE_LABEL[session.state]}</span>
       </p>
-      {#if session.error !== null}
+      {#if session.error !== null && session.failureBanner === null}
         <p class="error" role="alert">{session.error}</p>
       {/if}
       <dl>
@@ -105,6 +141,31 @@
       {/if}
       {#if canDisconnect}
         <button type="button" onclick={onDisconnect}>Disconnect</button>
+      {/if}
+    </article>
+    <article class="card">
+      <h2>Last Attempt</h2>
+      {#if lastAttempt === null}
+        <p>No Connection Attempt yet.</p>
+      {:else}
+        <dl>
+          <div>
+            <dt>Started</dt>
+            <dd>{formatAttemptTime(lastAttempt.startedAt)}</dd>
+          </div>
+          <div>
+            <dt>Connected</dt>
+            <dd>{attemptValue(lastAttempt, 'connectedAt')}</dd>
+          </div>
+          <div>
+            <dt>Ended</dt>
+            <dd>{attemptValue(lastAttempt, 'endedAt')}</dd>
+          </div>
+          <div>
+            <dt>Outcome</dt>
+            <dd>{attemptValue(lastAttempt, 'outcome')}</dd>
+          </div>
+        </dl>
       {/if}
     </article>
     <article class="card">
@@ -268,6 +329,18 @@
   }
 
   .error {
+    color: #b00020;
+  }
+
+  .failure-banner {
+    display: grid;
+    gap: 8px;
+    border: 1px solid #b00020;
+    padding: 12px 16px;
+    max-width: 36rem;
+  }
+
+  .failure-banner p {
     color: #b00020;
   }
 

@@ -79,7 +79,8 @@ app.whenReady().then(() => {
       }
       contents.send(channel, structuredClone(payload))
     },
-    resolveProfile: (profileId) => profileApi.getConnectTarget(profileId)
+    resolveProfile: (profileId) => profileApi.getConnectTarget(profileId),
+    recordAttempt: (profileId, summary) => profileApi.recordAttempt(profileId, summary)
   })
   profileApi.setSessionHooks({
     isOccupied: (profileId) => sshApi.hasSession(profileId),
