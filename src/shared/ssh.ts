@@ -115,7 +115,7 @@ export type RendererApi = {
     replacePrivateKey: (profileId: string) => Promise<ReplacePrivateKeyResult>
   }
   workspace: {
-    onCloseRequested: (handler: () => void) => () => void
+    onCloseRequested: (handler: (info: { activeCount: number }) => void) => () => void
     confirmClose: () => Promise<void>
     setCloseGuard: (blockClose: boolean) => Promise<void>
   }

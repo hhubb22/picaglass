@@ -1,6 +1,6 @@
 export type ClosableWorkspaceWindow = {
   webContents: {
-    send: (channel: string) => void
+    send: (channel: string, payload?: unknown) => void
   }
   on: (
     event: 'close' | 'closed',
@@ -16,6 +16,7 @@ export type WorkspaceCloseApp = {
 
 export type WorkspaceCloseOptions = {
   shouldBlock?: () => boolean
+  activeCount?: () => number
   beforeClose?: () => void | Promise<void>
   app?: WorkspaceCloseApp
   onQuit?: () => void
@@ -32,6 +33,7 @@ type CloseGuard = {
 type ActiveClose = {
   window: ClosableWorkspaceWindow
   guard: CloseGuard
+  options?: WorkspaceCloseOptions
 }
 
 const closeGuards = new WeakMap<object, CloseGuard>()
@@ -43,6 +45,15 @@ function needsConfirm(guard: CloseGuard): boolean {
     return false
   }
   return guard.blockClose || guard.shouldBlock?.() === true
+}
+
+function requestCloseConfirm(
+  window: ClosableWorkspaceWindow,
+  options?: WorkspaceCloseOptions
+): void {
+  window.webContents.send('workspace:close-requested', {
+    activeCount: options?.activeCount?.() ?? 0
+  })
 }
 
 function bindAppQuitOnce(app: WorkspaceCloseApp, onQuit: (() => void) | undefined): void {
@@ -58,7 +69,7 @@ function bindAppQuitOnce(app: WorkspaceCloseApp, onQuit: (() => void) | undefine
     }
     current.guard.quitRequested = true
     event.preventDefault()
-    current.window.webContents.send('workspace:close-requested')
+    requestCloseConfirm(current.window, current.options)
   })
 }
 
@@ -88,13 +99,13 @@ export function bindWorkspaceClose(
     }
   }
   closeGuards.set(window, guard)
-  activeClose = { window, guard }
+  activeClose = { window, guard, options }
   window.on('close', (event) => {
     if (!needsConfirm(guard) || event === undefined) {
       return
     }
     event.preventDefault()
-    window.webContents.send('workspace:close-requested')
+    requestCloseConfirm(window, options)
   })
   window.on('closed', () => {
     closeGuards.delete(window)

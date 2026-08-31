@@ -10,6 +10,7 @@ function fakeWindow(): {
   window: ClosableWorkspaceWindow
   preventCount: () => number
   sent: string[]
+  payloads: unknown[]
   closeCount: () => number
   fireClose: () => void
 } {
@@ -18,10 +19,12 @@ function fakeWindow(): {
   let preventCount = 0
   let closeCount = 0
   const sent: string[] = []
+  const payloads: unknown[] = []
   const window: ClosableWorkspaceWindow = {
     webContents: {
-      send(channel) {
+      send(channel, payload) {
         sent.push(channel)
+        payloads.push(payload)
       }
     },
     on(event, listener) {
@@ -53,6 +56,7 @@ function fakeWindow(): {
     window,
     preventCount: () => preventCount,
     sent,
+    payloads,
     closeCount: () => closeCount,
     fireClose() {
       window.close()
@@ -94,6 +98,17 @@ describe('bindWorkspaceClose', () => {
     expect(fake.sent).toEqual(['workspace:close-requested'])
     expect(fake.preventCount()).toBe(1)
     expect(fake.closeCount()).toBe(1)
+  })
+
+  it('tells the renderer how many SSH Sessions main will disconnect', () => {
+    const fake = fakeWindow()
+    bindWorkspaceClose(fake.window, {
+      shouldBlock: () => true,
+      activeCount: () => 3
+    })
+
+    fake.fireClose()
+    expect(fake.payloads).toEqual([{ activeCount: 3 }])
   })
 
   it('runs beforeClose then closes when the renderer confirms', async () => {

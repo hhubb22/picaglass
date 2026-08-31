@@ -43,6 +43,7 @@ function createWindow(sshApi: ReturnType<typeof createSshApi>): void {
   bindSshWindow(mainWindow, sshApi)
   bindWorkspaceClose(mainWindow as unknown as ClosableWorkspaceWindow, {
     shouldBlock: () => sshApi.activeSessionCount({ id: senderId }) > 0,
+    activeCount: () => sshApi.activeSessionCount({ id: senderId }),
     beforeClose: () => sshApi.disconnectAll({ id: senderId }),
     app,
     onQuit: () => {

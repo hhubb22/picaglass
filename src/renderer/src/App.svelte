@@ -819,10 +819,10 @@
         )
       }
     })
-    const stopClose = window.api.workspace.onCloseRequested(() => {
+    const stopClose = window.api.workspace.onCloseRequested((info) => {
       const confirmation = windowCloseConfirmation({
         unsaved: unsavedKind,
-        activeCount: liveCount
+        activeCount: Math.max(liveCount, info.activeCount)
       })
       if (confirmation === null) {
         void window.api.workspace.confirmClose()

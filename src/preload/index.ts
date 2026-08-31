@@ -91,8 +91,15 @@ const api: RendererApi = {
   },
   workspace: {
     onCloseRequested: (handler) => {
-      const listener = (): void => {
-        handler()
+      const listener = (_event: unknown, payload: unknown): void => {
+        let activeCount = 0
+        if (typeof payload === 'object' && payload !== null && 'activeCount' in payload) {
+          const count = payload.activeCount
+          if (typeof count === 'number' && Number.isInteger(count) && count >= 0) {
+            activeCount = count
+          }
+        }
+        handler({ activeCount })
       }
       ipcRenderer.on('workspace:close-requested', listener)
       return () => {
