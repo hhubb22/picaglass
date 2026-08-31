@@ -7,10 +7,12 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { MCP_ENDPOINT_FILE } from '../../shared/mcp-config'
 import type { DeviceFactsRun } from '../../shared/picos/device-facts'
 import type { InterfaceStatusRun } from '../../shared/picos/interface-status'
+import type { L2Run } from '../../shared/picos/l2'
 import { createMcpServer, type McpServerHandle } from './create-mcp-server'
 
 type OkDeviceFactsRun = Extract<DeviceFactsRun, { kind: 'ok' }>
 type OkInterfaceStatusRun = Extract<InterfaceStatusRun, { kind: 'ok' }>
+type OkL2Run = Extract<L2Run, { kind: 'ok' }>
 
 const TOKEN = 'b'.repeat(64)
 const STARTED_AT = '2026-08-31T00:00:00.000Z'
@@ -70,6 +72,42 @@ const parsedInterfaces: OkInterfaceStatusRun = {
     brief: { status: 'parsed', data: briefData, raw: 'brief-raw' },
     optics: { status: 'parsed', data: opticsData, raw: 'optics-raw' },
     details: null
+  }
+}
+
+const vlanData = {
+  rows: [{ id: '15', name: 'default', untagged: [] as string[], tagged: ['ae3'] }],
+  unparsedLines: 0
+}
+
+const fdbData = {
+  totalEntries: '0',
+  staticEntries: '0',
+  dynamicEntries: '0',
+  rows: [] as Array<{ vlan?: string }>,
+  unparsedLines: 0
+}
+
+const switchingData = {
+  rows: [
+    {
+      name: 'ge-1/1/1',
+      state: 'down',
+      tagging: 'untagged',
+      nativeVlan: '1',
+      vlanMembers: [] as string[]
+    }
+  ],
+  unparsedLines: 0
+}
+
+const parsedL2: OkL2Run = {
+  kind: 'ok',
+  raw: 'l2-raw',
+  block: {
+    vlans: { status: 'parsed', data: vlanData, raw: 'vlan-raw' },
+    fdb: { status: 'parsed', data: fdbData, raw: 'fdb-raw' },
+    switching: { status: 'parsed', data: switchingData, raw: 'sw-raw' }
   }
 }
 
@@ -236,6 +274,7 @@ describe('embedded MCP server', () => {
       profileId: string,
       interfaces?: readonly string[]
     ) => Promise<InterfaceStatusRun>
+    runL2?: (profileId: string) => Promise<L2Run>
     createToken?: () => string
     now?: () => Date
   }): Promise<{ dir: string; handle: McpServerHandle }> {
@@ -247,6 +286,7 @@ describe('embedded MCP server', () => {
       hasLiveSession: () => false,
       runDeviceFacts: async () => ({ kind: 'no-session' }),
       runInterfaceStatus: async () => ({ kind: 'no-session' }),
+      runL2: async () => ({ kind: 'no-session' }),
       createToken: () => TOKEN,
       now: () => new Date(STARTED_AT),
       ...overrides
@@ -670,5 +710,85 @@ describe('embedded MCP server', () => {
     })
     expect(result.isError).toBe(true)
     expect(result.text).toBe('invalid interface name: "all"')
+  })
+
+  it('returns structured L2 tables without raw by default, including an empty FDB', async () => {
+    const seen: string[] = []
+    const { handle } = await start({
+      listProfiles: async () => [{ id: 'p-lab', label: 'lab switch' }],
+      hasLiveSession: (profileId) => profileId === 'p-lab',
+      runL2: async (profileId) => {
+        seen.push(profileId)
+        return parsedL2
+      }
+    })
+    const sessionId = await openSession(handle)
+    const result = await callTool(handle, sessionId, 'picos_get_l2_tables', { profile: 'p-lab' })
+    expect(seen).toEqual(['p-lab'])
+    expect(result.isError).toBe(false)
+    expect(result.json).toEqual({
+      profile: { id: 'p-lab', label: 'lab switch' },
+      vlans: { status: 'parsed', data: vlanData },
+      fdb: { status: 'parsed', data: fdbData },
+      switching: { status: 'parsed', data: switchingData }
+    })
+    expect(JSON.stringify(result.json)).not.toContain('vlan-raw')
+    expect(JSON.stringify(result.json)).not.toContain('fdb-raw')
+    const withRaw = await callTool(handle, sessionId, 'picos_get_l2_tables', {
+      profile: 'p-lab',
+      includeRaw: true
+    })
+    expect(JSON.stringify(withRaw.json)).toContain('vlan-raw')
+    expect(JSON.stringify(withRaw.json)).toContain('fdb-raw')
+  })
+
+  it('returns a protocol error when L2 has no active SSH Session', async () => {
+    const seen: string[] = []
+    const { handle } = await start({
+      listProfiles: async () => [{ id: 'p-lab', label: 'lab switch' }],
+      hasLiveSession: () => false,
+      runL2: async () => {
+        seen.push('ran')
+        return parsedL2
+      }
+    })
+    const sessionId = await openSession(handle)
+    const result = await callTool(handle, sessionId, 'picos_get_l2_tables', {
+      profile: 'lab switch'
+    })
+    expect(result.isError).toBe(true)
+    expect(result.text).toBe('No active SSH Session for profile lab switch.')
+    expect(seen).toEqual([])
+  })
+
+  it('returns parse-failed FDB as a normal payload with raw and reason', async () => {
+    const run: L2Run = {
+      kind: 'ok',
+      raw: 'not fdb',
+      block: {
+        vlans: parsedL2.block.vlans,
+        fdb: {
+          status: 'parse-failed',
+          raw: 'not fdb',
+          reason: 'missing fdb skeleton'
+        },
+        switching: parsedL2.block.switching
+      }
+    }
+    const { handle } = await start({
+      listProfiles: async () => [{ id: 'p-lab', label: 'lab switch' }],
+      hasLiveSession: () => true,
+      runL2: async () => run
+    })
+    const sessionId = await openSession(handle)
+    const result = await callTool(handle, sessionId, 'picos_get_l2_tables', { profile: 'p-lab' })
+    expect(result.isError).toBe(false)
+    expect(result.json).toMatchObject({
+      fdb: {
+        status: 'parse-failed',
+        reason: 'missing fdb skeleton',
+        raw: 'not fdb'
+      }
+    })
   })
 })

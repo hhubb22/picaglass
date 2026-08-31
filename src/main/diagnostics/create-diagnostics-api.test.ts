@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { deviceFactsCliCommand } from '../../shared/picos/device-facts'
 import { interfaceStatusCliCommand } from '../../shared/picos/interface-status'
+import { l2CliCommand } from '../../shared/picos/l2'
 import { createProfileApi, type ProfileApi } from '../profiles/create-profile-api'
 import { createSshApi, type SshApi, type SshSender } from '../ssh/create-ssh-api'
 import {
@@ -529,5 +530,227 @@ describe('interface status diagnostic execution', () => {
       exitCode: 1,
       stderrHead: "syntax error, expecting 'all'\n"
     })
+  })
+})
+
+function noisyL2Stdout(): string {
+  return [
+    'Synchronizing configuration...OK.',
+    'NOTICE TO USERS',
+    'This is a trial license banner line.',
+    'Unauthorized use is prohibited.',
+    '',
+    'Welcome to PICOS',
+    'admin@PICOS> ',
+    '.',
+    'Execute command: show vlans | no-more',
+    fixture('show-vlans.txt'),
+    'admin@PICOS> ',
+    '.',
+    'Execute command: show mac-address table | no-more',
+    fixture('show-mac-address.txt'),
+    'admin@PICOS> ',
+    '.',
+    'Execute command: show ethernet-switching interfaces | no-more',
+    fixture('show-ethernet-switching-interfaces.txt'),
+    'admin@PICOS> '
+  ].join('\r\n')
+}
+
+describe('L2 diagnostic execution', () => {
+  let userDataPath: string | undefined
+  let sshApi: SshApi | undefined
+  let server: TestServer | undefined
+
+  afterEach(async () => {
+    sshApi?.dispose()
+    sshApi = undefined
+    if (server) {
+      await server.close()
+      server = undefined
+    }
+    if (userDataPath) {
+      await rm(userDataPath, { recursive: true, force: true })
+      userDataPath = undefined
+    }
+  })
+
+  async function wired(
+    emits: CapturedEmit[],
+    exec: (command: string) => TestExecResponse,
+    extras?: { diagnosticsTimeoutMs?: number }
+  ): Promise<{ profiles: ProfileApi; ssh: SshApi; diagnostics: DiagnosticsApi }> {
+    const dir = await mkdtemp(join(tmpdir(), 'picaglass-l2-'))
+    userDataPath = dir
+    const hostKey = generateHostKey(dir)
+    server = await startServer(hostKey.pem, { exec })
+    const profiles = createProfileApi({ userDataPath: dir })
+    const ssh = createSshApi({
+      userDataPath: dir,
+      dialogs: {
+        showOpenDialog: async () => ({ canceled: true, filePaths: [] })
+      },
+      emitTo: (_senderId, channel, payload) => {
+        emits.push({ channel, payload: structuredClone(payload) })
+      },
+      resolveProfile: (profileId) => profiles.getConnectTarget(profileId)
+    })
+    sshApi = ssh
+    const diagnostics = createDiagnosticsApi({
+      hasLiveSession: (profileId) => ssh.hasLiveSession(profileId),
+      exec: (profileId, command) =>
+        ssh.execOnSession(profileId, command, { timeoutMs: extras?.diagnosticsTimeoutMs })
+    })
+    return { profiles, ssh, diagnostics }
+  }
+
+  async function saveAndOpen(
+    profiles: ProfileApi,
+    ssh: SshApi,
+    sender: SshSender
+  ): Promise<{ profileId: string; sessionId: string }> {
+    if (server === undefined) {
+      throw new Error('expected a test server')
+    }
+    const created = await profiles.create({
+      displayName: 'lab switch',
+      host: '127.0.0.1',
+      port: server.port,
+      username: 'tester',
+      auth: { method: 'password' },
+      automaticDiscovery: false
+    })
+    if (!created.ok || created.workspace.selectedProfileId === null) {
+      throw new Error(`expected a saved profile, got ${JSON.stringify(created)}`)
+    }
+    const profileId = created.workspace.selectedProfileId
+    const first = await ssh.connectFromProfile(
+      { profileId, secret: 'secret-password', cols: 80, rows: 24 },
+      sender
+    )
+    if (first.ok) {
+      return { profileId, sessionId: first.sessionId }
+    }
+    if (first.reason !== 'host-unknown') {
+      throw new Error(`expected host-unknown, got ${JSON.stringify(first)}`)
+    }
+    const trusted = await ssh.confirmHostKey(first.sessionId, 'trust-always', sender)
+    if (!trusted.ok) {
+      throw new Error(`expected a live session, got ${JSON.stringify(trusted)}`)
+    }
+    return { profileId, sessionId: trusted.sessionId }
+  }
+
+  async function assertShellStillLive(
+    ssh: SshApi,
+    sessionId: string,
+    sender: SshSender,
+    emits: CapturedEmit[],
+    probe: Uint8Array
+  ): Promise<void> {
+    if (server === undefined) {
+      throw new Error('expected a test server')
+    }
+    ssh.write(sessionId, probe, sender)
+    await waitForServerBytes(server, probe)
+    await vi.waitFor(() => {
+      if (!emitsHaveChunk(emits, probe)) {
+        throw new Error('interactive session did not echo after diagnostics')
+      }
+    })
+  }
+
+  it('does not open an exec channel when there is no active SSH Session', async () => {
+    const emits: CapturedEmit[] = []
+    const { profiles, diagnostics } = await wired(emits, () => ({ stdout: 'should-not-run' }))
+    const created = await profiles.create({
+      displayName: 'lab switch',
+      host: '127.0.0.1',
+      port: server?.port ?? 22,
+      username: 'tester',
+      auth: { method: 'password' },
+      automaticDiscovery: false
+    })
+    if (!created.ok || created.workspace.selectedProfileId === null) {
+      throw new Error('expected a saved profile')
+    }
+
+    const run = await diagnostics.runL2(created.workspace.selectedProfileId)
+
+    expect(run).toEqual({ kind: 'no-session' })
+    expect(server?.execs()).toEqual([])
+  })
+
+  it('aggregates L2 commands on one no-PTY exec and parses a noisy empty FDB', async () => {
+    const emits: CapturedEmit[] = []
+    const { profiles, ssh, diagnostics } = await wired(emits, (command) => {
+      if (command === l2CliCommand()) {
+        return { stdout: noisyL2Stdout() }
+      }
+      return { stdout: '', exitCode: 1 }
+    })
+    const sender: SshSender = { id: 1 }
+    const { profileId, sessionId } = await saveAndOpen(profiles, ssh, sender)
+
+    const run = await diagnostics.runL2(profileId)
+
+    expect(server?.execs()).toEqual([{ command: l2CliCommand(), ptyRequested: false }])
+    expect(run.kind).toBe('ok')
+    if (run.kind !== 'ok') {
+      return
+    }
+    expect(run.block.vlans.status).toBe('parsed')
+    if (run.block.vlans.status === 'parsed') {
+      expect(run.block.vlans.data.rows).toHaveLength(5)
+    }
+    expect(run.block.fdb).toMatchObject({
+      status: 'parsed',
+      data: { rows: [], totalEntries: '0' }
+    })
+    expect(run.block.switching.status).toBe('parsed')
+    if (run.block.switching.status === 'parsed') {
+      expect(run.block.switching.data.rows).toHaveLength(64)
+    }
+    expect(run.raw.includes('Synchronizing configuration')).toBe(false)
+    await assertShellStillLive(ssh, sessionId, sender, emits, Uint8Array.from([0x71]))
+  })
+
+  it('treats a nonzero exit as a channel failure, not parse-failed', async () => {
+    const emits: CapturedEmit[] = []
+    const { profiles, ssh, diagnostics } = await wired(emits, () => ({
+      stdout: '',
+      stderr: "syntax error, expecting 'table'\n",
+      exitCode: 1
+    }))
+    const sender: SshSender = { id: 1 }
+    const { profileId } = await saveAndOpen(profiles, ssh, sender)
+
+    const run = await diagnostics.runL2(profileId)
+
+    expect(run).toEqual({
+      kind: 'channel-failed',
+      reason: 'nonzero-exit',
+      exitCode: 1,
+      stderrHead: "syntax error, expecting 'table'\n"
+    })
+  })
+
+  it('keeps one L2 request in flight per profile', async () => {
+    const emits: CapturedEmit[] = []
+    const { profiles, ssh, diagnostics } = await wired(emits, () => ({ hang: true }), {
+      diagnosticsTimeoutMs: 400
+    })
+    const sender: SshSender = { id: 1 }
+    const { profileId } = await saveAndOpen(profiles, ssh, sender)
+
+    const first = diagnostics.runL2(profileId)
+    const second = diagnostics.runL2(profileId)
+    await vi.waitFor(() => {
+      if ((server?.execs().length ?? 0) < 1) {
+        throw new Error('diagnostics exec has not started')
+      }
+    })
+    await Promise.all([first, second])
+    expect(server?.execs()).toHaveLength(1)
   })
 })

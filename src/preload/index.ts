@@ -83,7 +83,8 @@ const api: RendererApi = {
   diagnostics: {
     runDeviceFacts: (profileId) => ipcRenderer.invoke('diagnostics:runDeviceFacts', profileId),
     runInterfaceStatus: (profileId, interfaces) =>
-      ipcRenderer.invoke('diagnostics:runInterfaceStatus', profileId, interfaces)
+      ipcRenderer.invoke('diagnostics:runInterfaceStatus', profileId, interfaces),
+    runL2: (profileId) => ipcRenderer.invoke('diagnostics:runL2', profileId)
   },
   mcp: {
     getConfig: () => ipcRenderer.invoke('mcp:getConfig')

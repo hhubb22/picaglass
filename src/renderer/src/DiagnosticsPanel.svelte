@@ -1,10 +1,12 @@
 <script lang="ts">
   import type { DeviceFactsRun } from '../../shared/picos/device-facts'
   import type { InterfaceStatusRun } from '../../shared/picos/interface-status'
+  import type { L2Run } from '../../shared/picos/l2'
   import {
     diagnosticBlockTabs,
     deviceFactsPanelView,
     interfaceStatusPanelView,
+    l2PanelView,
     type DiagnosticBlockId
   } from '../../shared/picos/diagnostics-panel'
   import type { ProfileSessionUi } from '../../shared/ssh-session-ui'
@@ -23,14 +25,18 @@
   let showRaw = $state(false)
   let deviceFactsLoading = $state(false)
   let interfaceStatusLoading = $state(false)
+  let l2Loading = $state(false)
   let deviceFactsRun = $state<DeviceFactsRun | null>(null)
   let interfaceStatusRun = $state<InterfaceStatusRun | null>(null)
+  let l2Run = $state<L2Run | null>(null)
   let loadedDeviceFactsSessionId = $state<string | null>(null)
   let loadedInterfaceStatusKey = $state<string | null>(null)
+  let loadedL2SessionId = $state<string | null>(null)
   let selectedNames = $state<string[]>([])
   let requestedDetailNames = $state<string[]>([])
   let deviceFactsRequest = 0
   let interfaceStatusRequest = 0
+  let l2Request = 0
   let interfaceStatusLoadingKey = $state<string | null>(null)
 
   const connected = $derived(session.state === 'connected' && session.sessionId !== null)
@@ -40,8 +46,13 @@
   const interfaceStatusView = $derived(
     interfaceStatusRun === null ? null : interfaceStatusPanelView(interfaceStatusRun)
   )
+  const l2View = $derived(l2Run === null ? null : l2PanelView(l2Run))
   const loading = $derived(
-    selectedBlock === 'interface-status' ? interfaceStatusLoading : deviceFactsLoading
+    selectedBlock === 'interface-status'
+      ? interfaceStatusLoading
+      : selectedBlock === 'l2'
+        ? l2Loading
+        : deviceFactsLoading
   )
 
   function namesKey(names: string[]): string {
@@ -81,6 +92,23 @@
       if (seq === interfaceStatusRequest) {
         interfaceStatusLoading = false
         interfaceStatusLoadingKey = null
+      }
+    }
+  }
+
+  async function loadL2(sessionId: string): Promise<void> {
+    const seq = ++l2Request
+    l2Loading = true
+    try {
+      const next = await window.api.diagnostics.runL2(profileId)
+      if (seq !== l2Request) {
+        return
+      }
+      l2Run = next
+      loadedL2SessionId = sessionId
+    } finally {
+      if (seq === l2Request) {
+        l2Loading = false
       }
     }
   }
@@ -134,6 +162,28 @@
     void loadInterfaceStatus(sessionId, names)
   })
 
+  $effect(() => {
+    const sessionId = session.sessionId
+    const state = session.state
+    if (state !== 'connected' || sessionId === null) {
+      if (l2Loading) {
+        l2Request += 1
+        l2Loading = false
+      }
+      loadedL2SessionId = null
+      l2Run = null
+      return
+    }
+    if (collapsed || selectedBlock !== 'l2') {
+      return
+    }
+    if (loadedL2SessionId === sessionId || l2Loading) {
+      return
+    }
+    l2Run = null
+    void loadL2(sessionId)
+  })
+
   function refresh(): void {
     if (session.sessionId === null || session.state !== 'connected') {
       return
@@ -141,6 +191,11 @@
     if (selectedBlock === 'interface-status') {
       loadedInterfaceStatusKey = null
       void loadInterfaceStatus(session.sessionId, requestedDetailNames)
+      return
+    }
+    if (selectedBlock === 'l2') {
+      loadedL2SessionId = null
+      void loadL2(session.sessionId)
       return
     }
     loadedDeviceFactsSessionId = null
@@ -551,6 +606,138 @@
                 </article>
               {/each}
             {/if}
+          {/if}
+        {/if}
+      {:else if selectedBlock === 'l2' && (l2View === null || l2View.status === 'need-session')}
+        <p>{l2View === null ? 'Loading…' : l2View.message}</p>
+      {:else if selectedBlock === 'l2' && l2View !== null && l2View.status === 'channel-failed'}
+        <div class="notice channel" role="alert">
+          <p>{l2View.message}</p>
+          {#if l2View.stderrHead.length > 0}
+            <pre>{l2View.stderrHead}</pre>
+          {/if}
+        </div>
+        <button type="button" onclick={refresh}>Refresh</button>
+      {:else if selectedBlock === 'l2' && l2View !== null && l2View.status === 'ready'}
+        <div class="toolbar">
+          <button type="button" onclick={refresh} disabled={loading}>Refresh</button>
+          <button type="button" aria-pressed={showRaw} onclick={() => (showRaw = !showRaw)}>
+            {l2View.viewRawLabel}
+          </button>
+        </div>
+        {#if l2View.parseFailed}
+          <div class="notice parse" role="status">
+            <p>{l2View.parseFailedNotice}</p>
+          </div>
+        {/if}
+        {#if showRaw || l2View.parseFailed}
+          <pre class="raw">{l2View.raw}</pre>
+        {/if}
+        {#if !showRaw}
+          <h3>VLANs</h3>
+          {#if l2View.vlansFailure}
+            <div class="notice parse" role="status">
+              <p>{l2View.vlansFailure.reason}</p>
+              <pre class="raw">{l2View.vlansFailure.raw}</pre>
+            </div>
+          {:else if l2View.emptyVlansNotice}
+            <p class="muted">{l2View.emptyVlansNotice}</p>
+          {:else if l2View.vlans !== null}
+            <table>
+              <thead>
+                <tr>
+                  <th>VLAN</th>
+                  <th>Name</th>
+                  <th>Untagged</th>
+                  <th>Tagged</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each l2View.vlans as row (row.id)}
+                  <tr>
+                    <td>{row.id}</td>
+                    <td>{row.name ?? '—'}</td>
+                    <td>{row.untagged.length > 0 ? row.untagged.join(', ') : '—'}</td>
+                    <td>{row.tagged.length > 0 ? row.tagged.join(', ') : '—'}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          {/if}
+
+          <h3>FDB</h3>
+          {#if l2View.fdbTotalEntries !== undefined || l2View.fdbStaticEntries !== undefined || l2View.fdbDynamicEntries !== undefined}
+            <p class="muted">
+              {#if l2View.fdbTotalEntries !== undefined}Total {l2View.fdbTotalEntries}{/if}
+              {#if l2View.fdbStaticEntries !== undefined}
+                · static {l2View.fdbStaticEntries}{/if}
+              {#if l2View.fdbDynamicEntries !== undefined}
+                · dynamic {l2View.fdbDynamicEntries}{/if}
+            </p>
+          {/if}
+          {#if l2View.fdbFailure}
+            <div class="notice parse" role="status">
+              <p>{l2View.fdbFailure.reason}</p>
+              <pre class="raw">{l2View.fdbFailure.raw}</pre>
+            </div>
+          {:else if l2View.emptyFdbNotice}
+            <p class="muted">{l2View.emptyFdbNotice}</p>
+          {:else if l2View.fdb !== null}
+            <table>
+              <thead>
+                <tr>
+                  <th>VLAN</th>
+                  <th>MAC address</th>
+                  <th>Type</th>
+                  <th>Age</th>
+                  <th>Interfaces</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each l2View.fdb as row, index (`${row.vlan ?? ''}:${row.mac ?? ''}:${index}`)}
+                  <tr>
+                    <td>{row.vlan ?? '—'}</td>
+                    <td>{row.mac ?? '—'}</td>
+                    <td>{row.type ?? '—'}</td>
+                    <td>{row.age ?? '—'}</td>
+                    <td>{row.interfaces ?? '—'}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          {/if}
+
+          <h3>Switching</h3>
+          {#if l2View.switchingFailure}
+            <div class="notice parse" role="status">
+              <p>{l2View.switchingFailure.reason}</p>
+              <pre class="raw">{l2View.switchingFailure.raw}</pre>
+            </div>
+          {:else if l2View.emptySwitchingNotice}
+            <p class="muted">{l2View.emptySwitchingNotice}</p>
+          {:else if l2View.switching !== null}
+            <table>
+              <thead>
+                <tr>
+                  <th>Interface</th>
+                  <th>State</th>
+                  <th>Tagging</th>
+                  <th>Native VLAN</th>
+                  <th>VLAN members</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each l2View.switching as row (row.name)}
+                  <tr>
+                    <td>{row.name}</td>
+                    <td>{row.state ?? '—'}</td>
+                    <td>{row.tagging ?? '—'}</td>
+                    <td>{row.nativeVlan ?? '—'}</td>
+                    <td>{row.vlanMembers.length > 0 ? row.vlanMembers.join(', ') : '—'}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
           {/if}
         {/if}
       {/if}

@@ -10,6 +10,7 @@ import {
   type InterfaceStatusCard,
   type InterfaceStatusRun
 } from './interface-status'
+import { l2Card, type L2Card, type L2Run } from './l2'
 
 export const NEED_SESSION_MESSAGE = '请先连接'
 export { PARSE_FAILED_NOTICE, VIEW_RAW_LABEL }
@@ -110,4 +111,24 @@ export function interfaceStatusPanelView(run: InterfaceStatusRun): InterfaceStat
     return channelFailedView(run)
   }
   return { status: 'ready', ...interfaceStatusCard(run.block, run.raw) }
+}
+
+export type L2PanelView =
+  | { status: 'need-session'; message: string }
+  | {
+      status: 'channel-failed'
+      message: string
+      exitCode?: number
+      stderrHead: string
+    }
+  | ({ status: 'ready' } & L2Card)
+
+export function l2PanelView(run: L2Run): L2PanelView {
+  if (run.kind === 'no-session') {
+    return { status: 'need-session', message: NEED_SESSION_MESSAGE }
+  }
+  if (run.kind === 'channel-failed') {
+    return channelFailedView(run)
+  }
+  return { status: 'ready', ...l2Card(run.block, run.raw) }
 }
