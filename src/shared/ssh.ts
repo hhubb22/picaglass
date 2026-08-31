@@ -97,6 +97,7 @@ export type RendererApi = {
     resize: (sessionId: string, cols: number, rows: number) => void
     disconnect: (sessionId: string) => Promise<void>
     cancel: (profileId: string) => Promise<void>
+    disconnectAll: () => Promise<void>
     refreshDiscovery: (profileId: string) => Promise<void>
     onData: (
       handler: (sessionId: string, chunk: Uint8Array, profileId: string) => void
@@ -114,7 +115,7 @@ export type RendererApi = {
     replacePrivateKey: (profileId: string) => Promise<ReplacePrivateKeyResult>
   }
   workspace: {
-    onCloseRequested: (handler: () => void) => () => void
+    onCloseRequested: (handler: (info: { activeCount: number }) => void) => () => void
     confirmClose: () => Promise<void>
     setCloseGuard: (blockClose: boolean) => Promise<void>
   }

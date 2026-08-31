@@ -258,6 +258,102 @@ export function beginDisconnect(session: ProfileSessionUi): ProfileSessionUi {
   }
 }
 
+export function canCancelAttempt(state: VisibleSessionState): boolean {
+  return state === 'connecting' || state === 'verification-required'
+}
+
+export function canDisconnectSession(state: VisibleSessionState): boolean {
+  return state === 'connected'
+}
+
+function isActiveSession(state: VisibleSessionState): boolean {
+  return state !== 'no-active-session'
+}
+
+export function activeSessionCount(sessions: Record<string, ProfileSessionUi>): number {
+  let count = 0
+  for (const session of Object.values(sessions)) {
+    if (isActiveSession(session.state)) {
+      count += 1
+    }
+  }
+  return count
+}
+
+export type SessionConfirmation = {
+  title: string
+  confirmLabel: string
+  body: string
+}
+
+export type UnsavedCloseKind = 'create' | 'edit'
+
+function activeSessionPhrase(activeCount: number): string {
+  if (activeCount === 1) {
+    return '1 active SSH Session'
+  }
+  return `${activeCount} active SSH Sessions`
+}
+
+export function disconnectProfileConfirmation(label: string): SessionConfirmation {
+  return {
+    title: `Disconnect “${label}”?`,
+    confirmLabel: 'Disconnect',
+    body: `This ends the SSH Session for “${label}”.`
+  }
+}
+
+export function disconnectAllConfirmation(activeCount: number): SessionConfirmation | null {
+  if (activeCount < 1) {
+    return null
+  }
+  return {
+    title: 'Disconnect all sessions?',
+    confirmLabel: 'Disconnect All',
+    body: `This ends ${activeSessionPhrase(activeCount)}.`
+  }
+}
+
+export function windowCloseConfirmation(input: {
+  unsaved: UnsavedCloseKind | null
+  activeCount: number
+}): SessionConfirmation | null {
+  const { unsaved, activeCount } = input
+  if (unsaved === null && activeCount < 1) {
+    return null
+  }
+  if (activeCount < 1) {
+    if (unsaved === 'edit') {
+      return {
+        title: 'Discard unsaved edits?',
+        confirmLabel: 'Discard',
+        body: 'Navigating away or closing will not keep these edits.'
+      }
+    }
+    return {
+      title: 'Discard this unsaved Connection Profile?',
+      confirmLabel: 'Discard',
+      body: 'Navigating away or closing will not keep this profile.'
+    }
+  }
+  if (unsaved === null) {
+    return {
+      title: 'Disconnect sessions and close?',
+      confirmLabel: 'Disconnect and close',
+      body: `Closing ends ${activeSessionPhrase(activeCount)}. No session stays alive after exit.`
+    }
+  }
+  const unsavedSentence =
+    unsaved === 'edit'
+      ? 'Unsaved edits will be discarded.'
+      : 'The unsaved Connection Profile will be discarded.'
+  return {
+    title: 'Discard unsaved work and disconnect sessions?',
+    confirmLabel: 'Discard and close',
+    body: `${unsavedSentence} Closing also ends ${activeSessionPhrase(activeCount)}. No session stays alive after exit.`
+  }
+}
+
 function tracksSession(session: ProfileSessionUi, sessionId: string): boolean {
   return session.sessionId === sessionId || session.pendingHostKey?.sessionId === sessionId
 }

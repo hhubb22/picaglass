@@ -39,8 +39,17 @@ function createWindow(sshApi: ReturnType<typeof createSshApi>): void {
     mainWindow.show()
   })
 
+  const senderId = mainWindow.webContents.id
   bindSshWindow(mainWindow, sshApi)
-  bindWorkspaceClose(mainWindow as unknown as ClosableWorkspaceWindow)
+  bindWorkspaceClose(mainWindow as unknown as ClosableWorkspaceWindow, {
+    shouldBlock: () => sshApi.activeSessionCount({ id: senderId }) > 0,
+    activeCount: () => sshApi.activeSessionCount({ id: senderId }),
+    beforeClose: () => sshApi.disconnectAll({ id: senderId }),
+    app,
+    onQuit: () => {
+      sshApi.dispose()
+    }
+  })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
     void shell.openExternal(details.url)
@@ -95,10 +104,6 @@ app.whenReady().then(() => {
   registerSshIpc(sshApi)
   registerProfileIpc(profileApi)
   registerWorkspaceCloseIpc()
-
-  app.on('before-quit', () => {
-    sshApi.dispose()
-  })
 
   createWindow(sshApi)
 

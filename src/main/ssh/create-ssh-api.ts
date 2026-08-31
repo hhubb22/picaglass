@@ -78,6 +78,8 @@ export type SshApi = {
   resize: (sessionId: string, cols: number, rows: number, sender: SshSender) => void
   disconnect: (sessionId: string, sender: SshSender) => Promise<void>
   cancel: (profileId: string, sender: SshSender) => Promise<void>
+  disconnectAll: (sender: SshSender) => Promise<void>
+  activeSessionCount: (sender?: SshSender) => number
   refreshDiscovery: (profileId: string, sender: SshSender) => Promise<void>
   hasSession: (profileId: string) => boolean
   dropProfileSession: (profileId: string) => void
@@ -1295,6 +1297,40 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
       session.settleOpen?.(canceled)
       session.failHandshake?.(canceled)
       dropSession(sessionId)
+    },
+
+    async disconnectAll(sender) {
+      const owned = [...sessions.entries()].filter(([, session]) => session.senderId === sender.id)
+      for (const [sessionId, session] of owned) {
+        if (sessions.get(sessionId) !== session) {
+          continue
+        }
+        if (session.stream !== undefined) {
+          session.operatorDisconnect = true
+          await finalizeAttempt(session, 'operator-disconnected')
+        } else {
+          const canceled: SshReady & { ok: false } = {
+            ok: false,
+            reason: 'canceled',
+            message: 'canceled'
+          }
+          await finalizeAttempt(session, 'canceled')
+          session.settleOpen?.(canceled)
+          session.failHandshake?.(canceled)
+        }
+        dropSession(sessionId)
+      }
+    },
+
+    activeSessionCount(sender) {
+      let count = 0
+      for (const session of sessions.values()) {
+        if (sender !== undefined && session.senderId !== sender.id) {
+          continue
+        }
+        count += 1
+      }
+      return count
     },
 
     async refreshDiscovery(profileId, sender) {

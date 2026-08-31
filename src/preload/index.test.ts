@@ -46,6 +46,7 @@ describe('preload bridge', () => {
       'confirmHostKey',
       'connect',
       'disconnect',
+      'disconnectAll',
       'forgetHostKey',
       'hostTrust',
       'onData',

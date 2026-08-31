@@ -7,7 +7,7 @@ export function registerWorkspaceCloseIpc(): void {
     if (window === null) {
       return
     }
-    confirmWorkspaceClose(window)
+    return confirmWorkspaceClose(window)
   })
   ipcMain.handle('workspace:setCloseGuard', (event, blockClose: unknown) => {
     const window = BrowserWindow.fromWebContents(event.sender)

@@ -10,6 +10,7 @@ function fakeWindow(): {
   window: ClosableWorkspaceWindow
   preventCount: () => number
   sent: string[]
+  payloads: unknown[]
   closeCount: () => number
   fireClose: () => void
 } {
@@ -18,10 +19,12 @@ function fakeWindow(): {
   let preventCount = 0
   let closeCount = 0
   const sent: string[] = []
+  const payloads: unknown[] = []
   const window: ClosableWorkspaceWindow = {
     webContents: {
-      send(channel) {
+      send(channel, payload) {
         sent.push(channel)
+        payloads.push(payload)
       }
     },
     on(event, listener) {
@@ -53,6 +56,7 @@ function fakeWindow(): {
     window,
     preventCount: () => preventCount,
     sent,
+    payloads,
     closeCount: () => closeCount,
     fireClose() {
       window.close()
@@ -84,5 +88,85 @@ describe('bindWorkspaceClose', () => {
     confirmWorkspaceClose(fake.window)
     expect(fake.closeCount()).toBe(2)
     expect(fake.preventCount()).toBe(1)
+  })
+
+  it('blocks close while sessions are active even when the form is clean', () => {
+    const fake = fakeWindow()
+    bindWorkspaceClose(fake.window, { shouldBlock: () => true })
+
+    fake.fireClose()
+    expect(fake.sent).toEqual(['workspace:close-requested'])
+    expect(fake.preventCount()).toBe(1)
+    expect(fake.closeCount()).toBe(1)
+  })
+
+  it('tells the renderer how many SSH Sessions main will disconnect', () => {
+    const fake = fakeWindow()
+    bindWorkspaceClose(fake.window, {
+      shouldBlock: () => true,
+      activeCount: () => 3
+    })
+
+    fake.fireClose()
+    expect(fake.payloads).toEqual([{ activeCount: 3 }])
+  })
+
+  it('runs beforeClose then closes when the renderer confirms', async () => {
+    const fake = fakeWindow()
+    const order: string[] = []
+    bindWorkspaceClose(fake.window, {
+      shouldBlock: () => true,
+      beforeClose: async () => {
+        order.push('disconnect')
+      }
+    })
+
+    fake.fireClose()
+    order.push('warned')
+    await confirmWorkspaceClose(fake.window)
+    order.push('closed')
+    expect(order).toEqual(['warned', 'disconnect', 'closed'])
+    expect(fake.closeCount()).toBe(2)
+  })
+
+  it('treats app quit like window close so macOS Cmd+Q also warns then disconnects', async () => {
+    const fake = fakeWindow()
+    const quitListeners: Array<(event: { preventDefault: () => void }) => void> = []
+    let quitCount = 0
+    let onQuitCount = 0
+    const app = {
+      on(_event: 'before-quit', listener: (event: { preventDefault: () => void }) => void) {
+        quitListeners.push(listener)
+      },
+      quit() {
+        quitCount += 1
+        const event = {
+          preventDefault() {
+            return
+          }
+        }
+        for (const listener of quitListeners) {
+          listener(event)
+        }
+      }
+    }
+    bindWorkspaceClose(fake.window, {
+      shouldBlock: () => true,
+      beforeClose: async () => undefined,
+      app,
+      onQuit: () => {
+        onQuitCount += 1
+      }
+    })
+
+    app.quit()
+    expect(fake.sent).toEqual(['workspace:close-requested'])
+    expect(quitCount).toBe(1)
+    expect(onQuitCount).toBe(0)
+
+    await confirmWorkspaceClose(fake.window)
+    expect(quitCount).toBe(2)
+    expect(onQuitCount).toBe(1)
+    expect(fake.closeCount()).toBe(0)
   })
 })

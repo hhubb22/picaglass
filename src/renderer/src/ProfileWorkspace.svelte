@@ -4,6 +4,8 @@
   import type { WorkspaceTab } from '../../shared/profile-workspace-ui'
   import {
     SESSION_STATE_LABEL,
+    canCancelAttempt,
+    canDisconnectSession,
     sessionIndicator,
     type ProfileSessionUi
   } from '../../shared/ssh-session-ui'
@@ -27,6 +29,7 @@
     hostTrust,
     onTab,
     onConnect,
+    onCancel,
     onDisconnect,
     onClearTerminal,
     onEdit,
@@ -44,6 +47,7 @@
     hostTrust: HostTrustState
     onTab: (tab: WorkspaceTab) => void
     onConnect: () => void
+    onCancel: () => void
     onDisconnect: () => void
     onClearTerminal: () => void
     onEdit: () => void
@@ -60,7 +64,8 @@
   const idle = $derived(session.state === 'no-active-session')
   const showTerminalEmpty = $derived(idle && transcript.length === 0)
   const canConnect = $derived(idle && session.secretPrompt === null && !session.missingPrivateKey)
-  const canDisconnect = $derived(session.state === 'connected')
+  const canCancel = $derived(canCancelAttempt(session.state))
+  const canDisconnect = $derived(canDisconnectSession(session.state))
   const trustCard = $derived(hostTrustCard(hostTrust))
   const lastAttempt = $derived(profile.lastAttempt)
   const snapshotCard = $derived(machineSnapshotCard(profile.snapshot))
@@ -150,6 +155,9 @@
       </dl>
       {#if canConnect}
         <button type="button" onclick={onConnect}>Connect</button>
+      {/if}
+      {#if canCancel}
+        <button type="button" onclick={onCancel}>Cancel</button>
       {/if}
       {#if canDisconnect}
         <button type="button" onclick={onDisconnect}>Disconnect</button>
@@ -270,6 +278,9 @@
       </div>
     {:else}
       <div class="toolbar">
+        {#if canCancel}
+          <button type="button" onclick={onCancel}>Cancel</button>
+        {/if}
         <button type="button" onclick={onClearTerminal}>Clear Terminal</button>
       </div>
     {/if}
@@ -431,6 +442,7 @@
   .toolbar {
     display: flex;
     justify-content: end;
+    gap: 8px;
     padding: 4px 8px;
   }
 

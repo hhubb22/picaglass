@@ -82,6 +82,9 @@ export function registerSshIpc(api: SshApi): void {
     }
     return api.cancel(profileId, { id: event.sender.id })
   })
+  ipcMain.handle('ssh:disconnectAll', (event) => {
+    return api.disconnectAll({ id: event.sender.id })
+  })
   ipcMain.handle('ssh:refreshDiscovery', (event, profileId: unknown) => {
     if (typeof profileId !== 'string') {
       return
