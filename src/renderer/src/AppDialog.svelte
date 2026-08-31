@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
   import type { Snippet } from 'svelte'
+  import { bindDialogFocus } from './dialog-focus'
 
   let {
     title,
@@ -18,10 +20,26 @@
     onCancel: () => void
     children: Snippet
   } = $props()
+
+  let dialog = $state<HTMLDivElement | undefined>()
+
+  onMount(() => {
+    const root = dialog
+    if (root === undefined) {
+      return
+    }
+    return bindDialogFocus(root, onCancel)
+  })
 </script>
 
 <div class="overlay" role="presentation">
-  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+  <div
+    class="dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="dialog-title"
+    bind:this={dialog}
+  >
     <p id="dialog-title">{title}</p>
     {@render children()}
     <div class="actions">
@@ -38,16 +56,18 @@
   .overlay {
     position: fixed;
     inset: 0;
-    background: rgb(0 0 0 / 35%);
+    background: var(--overlay);
     display: grid;
     place-items: center;
     padding: 24px;
+    z-index: 2;
   }
 
   .dialog {
-    background: #fff;
-    border: 1px solid #111;
-    box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--fg);
+    box-shadow: var(--shadow);
     padding: 20px;
     display: grid;
     gap: 12px;
@@ -69,5 +89,9 @@
   button {
     font: inherit;
     padding: 8px 10px;
+    color: inherit;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    cursor: pointer;
   }
 </style>

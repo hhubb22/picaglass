@@ -87,7 +87,9 @@ const api: RendererApi = {
     select: (profileId) => ipcRenderer.invoke('profiles:select', profileId),
     delete: (profileId) => ipcRenderer.invoke('profiles:delete', profileId),
     pickPrivateKey: () => ipcRenderer.invoke('profiles:pickPrivateKey'),
-    replacePrivateKey: (profileId) => ipcRenderer.invoke('profiles:replacePrivateKey', profileId)
+    replacePrivateKey: (profileId) => ipcRenderer.invoke('profiles:replacePrivateKey', profileId),
+    setSidebarCollapsed: (collapsed) =>
+      ipcRenderer.invoke('profiles:setSidebarCollapsed', collapsed)
   },
   workspace: {
     onCloseRequested: (handler) => {

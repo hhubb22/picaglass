@@ -37,6 +37,59 @@ export function profileLabel(profile: ProfileLabelSource): string {
   return `${profile.username}@${destination}:${profile.port}`
 }
 
+function profileDestination(profile: { host: string; port: number }): string {
+  const host = formatHost(profile.host)
+  if (profile.port === DEFAULT_SSH_PORT) {
+    return host
+  }
+  return `${host}:${profile.port}`
+}
+
+export function filterProfiles<T extends ProfileLabelSource>(
+  profiles: readonly T[],
+  query: string
+): T[] {
+  const needle = query.trim().toLowerCase()
+  if (needle.length === 0) {
+    return [...profiles]
+  }
+  return profiles.filter((profile) => {
+    const haystack = [
+      profileLabel(profile),
+      profile.username,
+      profile.host,
+      profileDestination(profile)
+    ]
+      .join('\n')
+      .toLowerCase()
+    return haystack.includes(needle)
+  })
+}
+
+export function adjacentProfileId(
+  profiles: ReadonlyArray<{ id: string }>,
+  selectedId: string | null,
+  direction: 'previous' | 'next'
+): string | null {
+  if (profiles.length === 0) {
+    return null
+  }
+  const last = profiles[profiles.length - 1]
+  const first = profiles[0]
+  if (first === undefined || last === undefined) {
+    return null
+  }
+  const index =
+    selectedId === null ? -1 : profiles.findIndex((profile) => profile.id === selectedId)
+  if (index < 0) {
+    return direction === 'next' ? first.id : last.id
+  }
+  if (direction === 'next') {
+    return (profiles[index + 1] ?? first).id
+  }
+  return (profiles[index - 1] ?? last).id
+}
+
 export type ProfileAuthDraft =
   | { method: 'password' }
   | { method: 'privateKey'; keyRef: string }
@@ -337,6 +390,7 @@ export type WorkspaceNotice =
 export type ProfileWorkspace = {
   profiles: RendererProfile[]
   selectedProfileId: string | null
+  sidebarCollapsed: boolean
   notice: WorkspaceNotice | null
 }
 
@@ -379,5 +433,9 @@ export type ReplacePrivateKeyResult =
       reason: 'canceled' | 'unknown-profile' | 'not-private-key' | 'write-failed'
       workspace: ProfileWorkspace
     }
+
+export type SetSidebarCollapsedResult =
+  | { ok: true; workspace: ProfileWorkspace }
+  | { ok: false; reason: 'write-failed'; workspace: ProfileWorkspace }
 
 export type ProfileKeyPick = { keyRef: string; label: string }

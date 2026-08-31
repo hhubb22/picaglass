@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, dialog, webContents } from 'electron'
+import { app, shell, BrowserWindow, dialog, webContents, nativeTheme } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -20,6 +20,10 @@ function openFileDialog(
   return dialog.showOpenDialog(options)
 }
 
+function windowBackground(): string {
+  return nativeTheme.shouldUseDarkColors ? '#161616' : '#ffffff'
+}
+
 function createWindow(sshApi: ReturnType<typeof createSshApi>): void {
   const mainWindow = new BrowserWindow({
     width: 1180,
@@ -28,6 +32,7 @@ function createWindow(sshApi: ReturnType<typeof createSshApi>): void {
     minHeight: 600,
     show: false,
     autoHideMenuBar: true,
+    backgroundColor: windowBackground(),
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -37,6 +42,16 @@ function createWindow(sshApi: ReturnType<typeof createSshApi>): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
+  })
+
+  const applyWindowBackground = (): void => {
+    if (!mainWindow.isDestroyed()) {
+      mainWindow.setBackgroundColor(windowBackground())
+    }
+  }
+  nativeTheme.on('updated', applyWindowBackground)
+  mainWindow.on('closed', () => {
+    nativeTheme.off('updated', applyWindowBackground)
   })
 
   const senderId = mainWindow.webContents.id

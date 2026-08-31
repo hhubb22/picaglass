@@ -83,6 +83,7 @@ describe('createProfileApi', () => {
     await expect(api.load()).resolves.toEqual({
       profiles: [],
       selectedProfileId: null,
+      sidebarCollapsed: false,
       notice: null
     })
   })
@@ -319,6 +320,7 @@ describe('createProfileApi', () => {
     await expect(api.load()).resolves.toEqual({
       profiles: [],
       selectedProfileId: null,
+      sidebarCollapsed: false,
       notice: null
     })
   })
@@ -401,6 +403,44 @@ describe('createProfileApi', () => {
       created.ok ? created.workspace.selectedProfileId : null
     )
     expect(document.sidebarCollapsed).toBe(false)
+  })
+
+  it('persists sidebar collapsed state across relaunch', async () => {
+    const dir = await tempUserData()
+    api = createProfileApi({ userDataPath: dir })
+    const collapsed = await api.setSidebarCollapsed(true)
+    expect(collapsed.ok).toBe(true)
+    if (!collapsed.ok) {
+      throw new Error('expected setSidebarCollapsed to succeed')
+    }
+    expect(collapsed.workspace.sidebarCollapsed).toBe(true)
+
+    api = createProfileApi({ userDataPath: dir })
+    const reloaded = await api.load()
+    expect(reloaded.sidebarCollapsed).toBe(true)
+
+    const expanded = await api.setSidebarCollapsed(false)
+    expect(expanded.ok).toBe(true)
+    if (!expanded.ok) {
+      throw new Error('expected expand to succeed')
+    }
+    expect(expanded.workspace.sidebarCollapsed).toBe(false)
+  })
+
+  it('rejects a failed sidebar collapse write and keeps the last durable collapsed state', async () => {
+    const dir = await tempUserData()
+    api = createProfileApi({ userDataPath: dir })
+    const created = await api.create(passwordDraft())
+    expect(created.ok).toBe(true)
+
+    await mkdir(join(dir, WORKSPACE_DIR, 'workspace.json.tmp'))
+    const failed = await api.setSidebarCollapsed(true)
+    expect(failed.ok).toBe(false)
+    if (failed.ok || failed.reason !== 'write-failed') {
+      throw new Error('expected write-failed')
+    }
+    expect(failed.workspace.sidebarCollapsed).toBe(false)
+    expect(failed.workspace.notice?.kind).toBe('write-failed')
   })
 })
 

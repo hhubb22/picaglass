@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
+  import { bindDialogFocus } from './dialog-focus'
+
   let {
     title,
     confirmLabel,
@@ -16,16 +19,31 @@
   } = $props()
 
   let secret = $state('')
+  let dialog = $state<HTMLDivElement | undefined>()
 
   function submit(): void {
     const value = secret
     secret = ''
     onConfirm(value)
   }
+
+  onMount(() => {
+    const root = dialog
+    if (root === undefined) {
+      return
+    }
+    return bindDialogFocus(root, onCancel, 'first')
+  })
 </script>
 
 <div class="overlay" role="presentation">
-  <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="secret-title">
+  <div
+    class="dialog"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="secret-title"
+    bind:this={dialog}
+  >
     <form
       onsubmit={(event) => {
         event.preventDefault()
@@ -52,7 +70,7 @@
   .overlay {
     position: fixed;
     inset: 0;
-    background: rgb(0 0 0 / 35%);
+    background: var(--overlay);
     display: grid;
     place-items: center;
     padding: 24px;
@@ -60,9 +78,10 @@
   }
 
   .dialog {
-    background: #fff;
-    border: 1px solid #111;
-    box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+    background: var(--bg);
+    color: var(--fg);
+    border: 1px solid var(--fg);
+    box-shadow: var(--shadow);
     padding: 20px;
     display: grid;
     gap: 12px;
@@ -89,10 +108,17 @@
   button {
     font: inherit;
     padding: 8px 10px;
+    color: inherit;
+    background: var(--bg);
+    border: 1px solid var(--border);
+  }
+
+  button {
+    cursor: pointer;
   }
 
   .error {
-    color: #b00020;
+    color: var(--status-danger);
   }
 
   .actions {

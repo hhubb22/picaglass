@@ -25,6 +25,7 @@ import {
   type RendererProfile,
   type ReplacePrivateKeyResult,
   type SelectProfileResult,
+  type SetSidebarCollapsedResult,
   type UpdateProfileInput,
   type UpdateProfileResult,
   type WorkspaceNotice
@@ -68,6 +69,7 @@ export type ProfileApi = {
   delete: (profileId: string) => Promise<DeleteProfileResult>
   pickPrivateKey: () => Promise<ProfileKeyPick | null>
   replacePrivateKey: (profileId: string) => Promise<ReplacePrivateKeyResult>
+  setSidebarCollapsed: (collapsed: boolean) => Promise<SetSidebarCollapsedResult>
   getConnectTarget: (profileId: string) => Promise<ProfileConnectTarget | undefined>
   recordAttempt: (profileId: string, summary: ConnectionAttemptSummary) => Promise<void>
   getSnapshot: (profileId: string) => Promise<MachineSnapshot | undefined>
@@ -325,13 +327,10 @@ function project(document: StoredDocument, notice: WorkspaceNotice | null): Prof
   const sorted = sortProfilesByLabel(document.profiles)
   return {
     profiles: sorted.map((profile) =>
-      toRenderer(
-        profile,
-        document.latestSnapshots[profile.id],
-        document.latestAttempts[profile.id]
-      )
+      toRenderer(profile, document.latestSnapshots[profile.id], document.latestAttempts[profile.id])
     ),
     selectedProfileId: resolveSelectedProfileId(document.lastSelectedProfileId, document.profiles),
+    sidebarCollapsed: document.sidebarCollapsed,
     notice
   }
 }
@@ -797,6 +796,21 @@ export function createProfileApi(deps: CreateProfileApiDeps): ProfileApi {
         existing.id,
         profileEditClearing(identityOf(existing), identityOf(updated))
       )
+      const written = await commit(next)
+      if (!written) {
+        return { ok: false, reason: 'write-failed', workspace: workspace() }
+      }
+      return { ok: true, workspace: workspace() }
+    },
+
+    async setSidebarCollapsed(collapsed) {
+      await ensureLoaded()
+      const current = workspace()
+      if (document !== undefined && document.sidebarCollapsed === collapsed) {
+        return { ok: true, workspace: current }
+      }
+      const next = cloneDocument(document ?? emptyDocument())
+      next.sidebarCollapsed = collapsed
       const written = await commit(next)
       if (!written) {
         return { ok: false, reason: 'write-failed', workspace: workspace() }

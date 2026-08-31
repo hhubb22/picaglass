@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
+  adjacentProfileId,
   deleteProfileConfirmation,
   draftFromProfile,
+  filterProfiles,
   findDuplicateProfile,
   isProfileDraftDirty,
   isProfileEditDirty,
@@ -584,5 +586,96 @@ describe('isProfileDraftDirty', () => {
         automaticDiscovery: false
       })
     ).toBe(true)
+  })
+})
+
+describe('filterProfiles', () => {
+  const prod = {
+    id: 'p',
+    displayName: 'prod db',
+    username: 'deploy',
+    host: '10.0.4.7',
+    port: 22
+  }
+  const alice = {
+    id: 'a',
+    username: 'alice',
+    host: 'alpha.test',
+    port: 2222
+  }
+  const ipv6 = {
+    id: 'v',
+    username: 'root',
+    host: '2001:db8::1',
+    port: 22
+  }
+
+  it('returns every profile when the query is empty or whitespace', () => {
+    expect(filterProfiles([prod, alice], '').map((profile) => profile.id)).toEqual(['p', 'a'])
+    expect(filterProfiles([prod, alice], '   ').map((profile) => profile.id)).toEqual(['p', 'a'])
+  })
+
+  it('filters by Profile Label, username, and destination without regard to case', () => {
+    expect(filterProfiles([prod, alice, ipv6], 'PROD').map((profile) => profile.id)).toEqual(['p'])
+    expect(filterProfiles([prod, alice, ipv6], 'alice').map((profile) => profile.id)).toEqual(['a'])
+    expect(filterProfiles([prod, alice, ipv6], '10.0.4.7').map((profile) => profile.id)).toEqual([
+      'p'
+    ])
+  })
+
+  it('matches username even when a display name is the Profile Label', () => {
+    expect(filterProfiles([prod, alice], 'deploy').map((profile) => profile.id)).toEqual(['p'])
+  })
+
+  it('matches a non-default port in the destination and a bracketed IPv6 host', () => {
+    expect(filterProfiles([prod, alice, ipv6], '2222').map((profile) => profile.id)).toEqual(['a'])
+    expect(
+      filterProfiles([prod, alice, ipv6], '[2001:db8::1]').map((profile) => profile.id)
+    ).toEqual(['v'])
+  })
+
+  it('keeps the caller’s order and drops non-matches', () => {
+    expect(filterProfiles([ipv6, prod, alice], 'a').map((profile) => profile.id)).toEqual(['a'])
+  })
+})
+
+describe('adjacentProfileId', () => {
+  const ids = [{ id: 'a' }, { id: 'p' }, { id: 'z' }]
+
+  it('moves to the next profile and wraps from last to first', () => {
+    expect(adjacentProfileId(ids, 'a', 'next')).toBe('p')
+    expect(adjacentProfileId(ids, 'z', 'next')).toBe('a')
+  })
+
+  it('moves to the previous profile and wraps from first to last', () => {
+    expect(adjacentProfileId(ids, 'p', 'previous')).toBe('a')
+    expect(adjacentProfileId(ids, 'a', 'previous')).toBe('z')
+  })
+
+  it('selects the first or last profile when nothing is selected', () => {
+    expect(adjacentProfileId(ids, null, 'next')).toBe('a')
+    expect(adjacentProfileId(ids, null, 'previous')).toBe('z')
+  })
+
+  it('treats a selected id missing from the list like no selection', () => {
+    expect(adjacentProfileId(ids, 'gone', 'next')).toBe('a')
+    expect(adjacentProfileId(ids, 'gone', 'previous')).toBe('z')
+  })
+
+  it('returns null when there are no profiles', () => {
+    expect(adjacentProfileId([], 'a', 'next')).toBe(null)
+  })
+
+  it('walks the filtered list so search narrows previous/next', () => {
+    const filtered = filterProfiles(
+      [
+        { id: 'a', username: 'alice', host: 'alpha.test', port: 22 },
+        { id: 'p', displayName: 'prod db', username: 'deploy', host: '10.0.4.7', port: 22 },
+        { id: 'z', displayName: 'zeta', username: 'z', host: 'z.test', port: 22 }
+      ],
+      'd'
+    )
+    expect(filtered.map((profile) => profile.id)).toEqual(['p'])
+    expect(adjacentProfileId(filtered, 'a', 'next')).toBe('p')
   })
 })

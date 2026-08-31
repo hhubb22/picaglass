@@ -7,77 +7,139 @@
     sessionIndicator,
     type ProfileSessionUi
   } from '../../shared/ssh-session-ui'
+  import SessionStateMark from './SessionStateMark.svelte'
 
   let {
     profiles,
     selectedProfileId,
     creating,
     sessions,
+    collapsed,
+    searchQuery = $bindable(''),
     onCreate,
     onSelect,
-    onDisconnectAll
+    onDisconnectAll,
+    onToggleCollapsed
   }: {
     profiles: RendererProfile[]
     selectedProfileId: string | null
     creating: boolean
     sessions: Record<string, ProfileSessionUi>
+    collapsed: boolean
+    searchQuery: string
     onCreate: () => void
     onSelect: (profileId: string) => void
     onDisconnectAll: () => void
+    onToggleCollapsed: () => void
   } = $props()
+
+  let searchInput = $state<HTMLInputElement | undefined>()
 
   function view(profileId: string): ProfileSessionUi {
     return sessions[profileId] ?? emptyProfileSession()
   }
 
   const liveCount = $derived(activeSessionCount(sessions))
+
+  export function focusSearch(): void {
+    searchInput?.focus()
+    searchInput?.select()
+  }
 </script>
 
-<aside class="sidebar">
-  <div class="brand">
-    <p class="name">Picaglass</p>
-    <p class="hint">Connection Profiles</p>
-  </div>
+{#if collapsed}
+  <button type="button" class="reveal" onclick={onToggleCollapsed} aria-expanded="false">
+    Show sidebar
+  </button>
+{:else}
+  <aside class="sidebar" id="profile-sidebar">
+    <div class="brand">
+      <div>
+        <p class="name">Picaglass</p>
+        <p class="hint">Connection Profiles</p>
+      </div>
+      <button type="button" class="collapse" onclick={onToggleCollapsed} aria-expanded="true">
+        Hide sidebar
+      </button>
+    </div>
 
-  {#if profiles.length === 0}
-    <p class="empty-list">No saved profiles yet.</p>
-  {:else}
-    <ul>
-      {#each profiles as profile (profile.id)}
-        {@const session = view(profile.id)}
-        {@const indicator = sessionIndicator(session.state)}
-        <li>
-          <button
-            type="button"
-            class:selected={profile.id === selectedProfileId && !creating}
-            onclick={() => onSelect(profile.id)}
-          >
-            <span class="indicator {indicator}" aria-hidden="true"></span>
-            <span class="copy">
-              <span class="label">{profile.label}</span>
-              <span class="state">{SESSION_STATE_LABEL[session.state]}</span>
-            </span>
-            {#if session.unseenFailure}
-              <span class="failure-badge" aria-label="Failed">
-                <span class="badge-icon" aria-hidden="true"></span>
-                <span>Failed</span>
+    <div class="search" role="search">
+      <label>
+        <span class="visually-hidden">Search Connection Profiles</span>
+        <input
+          bind:this={searchInput}
+          bind:value={searchQuery}
+          type="search"
+          name="profile-search"
+          placeholder="Search by label, username, or destination"
+        />
+      </label>
+    </div>
+
+    {#if profiles.length === 0}
+      <p class="empty-list">
+        {searchQuery.trim().length === 0 ? 'No saved profiles yet.' : 'No matching profiles.'}
+      </p>
+    {:else}
+      <ul>
+        {#each profiles as profile (profile.id)}
+          {@const session = view(profile.id)}
+          {@const indicator = sessionIndicator(session.state)}
+          <li>
+            <button
+              type="button"
+              class:selected={profile.id === selectedProfileId && !creating}
+              aria-current={profile.id === selectedProfileId && !creating ? 'true' : undefined}
+              onclick={() => onSelect(profile.id)}
+            >
+              <svg class="glyph" viewBox="0 0 16 16" aria-hidden="true">
+                <rect
+                  x="2.5"
+                  y="3"
+                  width="11"
+                  height="8"
+                  rx="1.2"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.25"
+                />
+                <path
+                  d="M5 13h6"
+                  stroke="currentColor"
+                  stroke-width="1.25"
+                  stroke-linecap="round"
+                />
+              </svg>
+              <span class="copy">
+                <span class="label">{profile.label}</span>
+                <span class="state">
+                  <SessionStateMark {indicator} label={SESSION_STATE_LABEL[session.state]} />
+                </span>
               </span>
-            {/if}
-          </button>
-        </li>
-      {/each}
-    </ul>
-  {/if}
+              {#if session.unseenFailure}
+                <span class="failure-badge">
+                  <svg class="badge-icon" viewBox="0 0 12 12" aria-hidden="true">
+                    <path d="M6 1.5 11 10.5H1Z" fill="currentColor" />
+                  </svg>
+                  <span>Failed</span>
+                </span>
+              {/if}
+            </button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
 
-  <div class="menu">
-    <button type="button" class="create" class:selected={creating} onclick={onCreate}>
-      Create Connection Profile
-    </button>
-    <button type="button" disabled={liveCount === 0} onclick={onDisconnectAll}>
-      Disconnect All
-    </button>
-  </div>
-</aside>
+    <div class="menu">
+      <button type="button" class="create" class:selected={creating} onclick={onCreate}>
+        Create Connection Profile
+      </button>
+      <button type="button" disabled={liveCount === 0} onclick={onDisconnectAll}>
+        Disconnect All
+      </button>
+    </div>
+  </aside>
+{/if}
 
 <style>
   .sidebar {
@@ -85,8 +147,17 @@
     align-content: start;
     gap: 16px;
     padding: 20px 16px;
-    border-right: 1px solid #d0d0d0;
+    border-right: 1px solid var(--border);
     overflow: auto;
+    min-width: 18rem;
+    background: var(--bg);
+  }
+
+  .brand {
+    display: flex;
+    gap: 8px;
+    align-items: start;
+    justify-content: space-between;
   }
 
   .name {
@@ -97,8 +168,37 @@
   .hint,
   .empty-list,
   .state {
-    color: #555;
+    color: var(--muted);
     font-size: 0.875rem;
+  }
+
+  .collapse,
+  .reveal {
+    font: inherit;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+
+  .reveal {
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+    padding: 12px 8px;
+    border: none;
+    border-right: 1px solid var(--border);
+    background: var(--bg);
+    cursor: pointer;
+  }
+
+  .search input {
+    font: inherit;
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: inherit;
   }
 
   ul {
@@ -116,6 +216,7 @@
     padding: 8px 10px;
     border: 1px solid transparent;
     background: transparent;
+    color: inherit;
     cursor: pointer;
   }
 
@@ -124,6 +225,13 @@
     grid-template-columns: auto 1fr auto;
     gap: 8px;
     align-items: start;
+  }
+
+  .glyph {
+    width: 1rem;
+    height: 1rem;
+    margin-top: 0.2rem;
+    color: var(--fg);
   }
 
   .copy {
@@ -138,43 +246,24 @@
     white-space: nowrap;
   }
 
-  .indicator {
-    width: 0.55rem;
-    height: 0.55rem;
-    margin-top: 0.4rem;
-    border-radius: 50%;
-    background: #888;
-  }
-
-  .indicator.pending,
-  .indicator.attention {
-    background: #c9a227;
-  }
-
-  .indicator.live {
-    background: #2f7d32;
-  }
-
   .failure-badge {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    color: #b00020;
+    color: var(--status-danger);
     font-size: 0.75rem;
     margin-top: 0.2rem;
   }
 
   .badge-icon {
-    width: 0.45rem;
-    height: 0.45rem;
-    border-radius: 50%;
-    background: #b00020;
+    width: 0.7rem;
+    height: 0.7rem;
   }
 
   button.selected,
   button:focus-visible {
-    border-color: #111;
-    background: #f3f3f3;
+    border-color: var(--fg);
+    background: var(--hover);
   }
 
   button:disabled {
@@ -183,7 +272,7 @@
   }
 
   .create {
-    border-color: #111;
+    border-color: var(--fg);
   }
 
   .menu {

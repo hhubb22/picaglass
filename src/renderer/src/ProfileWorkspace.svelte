@@ -18,6 +18,7 @@
   } from '../../shared/connection-attempt'
   import type { TerminalRegistry } from './terminal-registry'
   import ProfileTerminalHost from './ProfileTerminalHost.svelte'
+  import SessionStateMark from './SessionStateMark.svelte'
 
   let {
     profile,
@@ -95,11 +96,23 @@
 </script>
 
 <section class="workspace">
-  <nav class="tabs">
-    <button type="button" class:selected={tab === 'overview'} onclick={() => onTab('overview')}>
+  <nav class="tabs" aria-label="Profile workspace">
+    <button
+      type="button"
+      role="tab"
+      aria-selected={tab === 'overview'}
+      class:selected={tab === 'overview'}
+      onclick={() => onTab('overview')}
+    >
       Overview
     </button>
-    <button type="button" class:selected={tab === 'terminal'} onclick={() => onTab('terminal')}>
+    <button
+      type="button"
+      role="tab"
+      aria-selected={tab === 'terminal'}
+      class:selected={tab === 'terminal'}
+      onclick={() => onTab('terminal')}
+    >
       Terminal
     </button>
   </nav>
@@ -119,153 +132,174 @@
         <button type="button" onclick={onDismissFailure}>Dismiss</button>
       </div>
     {/if}
-    <div class="header">
-      <h1>{profile.label}</h1>
-      <div class="rail">
-        <button type="button" onclick={onEdit}>Edit</button>
-        <button type="button" onclick={onDelete}>Delete</button>
+    <div class="overview-columns">
+      <aside class="summary-rail">
+        <svg class="glyph" viewBox="0 0 48 48" aria-hidden="true">
+          <rect
+            x="8"
+            y="10"
+            width="32"
+            height="22"
+            rx="3"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          />
+          <path d="M16 38h16" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+          <path d="M24 32v6" stroke="currentColor" stroke-width="2" />
+        </svg>
+        <h1>{profile.label}</h1>
+        <p class="status">
+          <SessionStateMark {indicator} label={SESSION_STATE_LABEL[session.state]} />
+        </p>
+        {#if session.error !== null && session.failureBanner === null}
+          <p class="error" role="alert">{session.error}</p>
+        {/if}
+        <div class="rail-actions">
+          {#if canConnect}
+            <button type="button" onclick={onConnect}>Connect</button>
+          {/if}
+          {#if canCancel}
+            <button type="button" onclick={onCancel}>Cancel</button>
+          {/if}
+          {#if canDisconnect}
+            <button type="button" onclick={onDisconnect}>Disconnect</button>
+          {/if}
+          <button type="button" onclick={onEdit}>Edit</button>
+          <button type="button" onclick={onDelete}>Delete</button>
+        </div>
+      </aside>
+      <div class="detail-cards">
+        <article class="card">
+          <h2>Session</h2>
+          <p class="status">
+            <SessionStateMark {indicator} label={SESSION_STATE_LABEL[session.state]} />
+          </p>
+          <dl>
+            <div>
+              <dt>Host</dt>
+              <dd>{profile.host}</dd>
+            </div>
+            <div>
+              <dt>Port</dt>
+              <dd>{profile.port}</dd>
+            </div>
+            <div>
+              <dt>Username</dt>
+              <dd>{profile.username}</dd>
+            </div>
+            <div>
+              <dt>Authentication Method</dt>
+              <dd>{authSummary}</dd>
+            </div>
+          </dl>
+        </article>
+        <article class="card">
+          <h2>Machine Snapshot</h2>
+          {#if snapshotCard.empty}
+            <p>No Machine Snapshot yet.</p>
+          {:else if snapshotCard.unavailable && !snapshotCard.hasFacts}
+            <p>Discovery unavailable</p>
+            {#if snapshotCard.failedRefreshAt}
+              <p class="meta">Refresh failed {formatSnapshotTime(snapshotCard.failedRefreshAt)}</p>
+            {/if}
+          {:else}
+            {#if snapshotCard.lastObserved}
+              <p class="meta">Last observed</p>
+            {/if}
+            {#if snapshotCard.unavailable}
+              <p>Discovery unavailable</p>
+            {/if}
+            <dl>
+              {#if snapshotCard.hostname}
+                <div>
+                  <dt>Hostname</dt>
+                  <dd>{snapshotCard.hostname}</dd>
+                </div>
+              {/if}
+              {#if snapshotCard.kernelName}
+                <div>
+                  <dt>Kernel name</dt>
+                  <dd>{snapshotCard.kernelName}</dd>
+                </div>
+              {/if}
+              {#if snapshotCard.kernelRelease}
+                <div>
+                  <dt>Kernel release</dt>
+                  <dd>{snapshotCard.kernelRelease}</dd>
+                </div>
+              {/if}
+              {#if snapshotCard.architecture}
+                <div>
+                  <dt>Architecture</dt>
+                  <dd>{snapshotCard.architecture}</dd>
+                </div>
+              {/if}
+            </dl>
+            {#if snapshotCard.observedAt}
+              <p class="meta">
+                {#if snapshotCard.lastObserved}
+                  {formatSnapshotTime(snapshotCard.observedAt)}
+                {:else}
+                  Observed {formatSnapshotTime(snapshotCard.observedAt)}
+                {/if}
+              </p>
+            {/if}
+            {#if snapshotCard.failedRefreshAt}
+              <p class="meta">Refresh failed {formatSnapshotTime(snapshotCard.failedRefreshAt)}</p>
+            {/if}
+          {/if}
+          {#if canDisconnect}
+            <button type="button" onclick={onRefreshSnapshot}>Refresh</button>
+          {/if}
+        </article>
+        <article class="card">
+          <h2>Last Attempt</h2>
+          {#if lastAttempt === null}
+            <p>No Connection Attempt yet.</p>
+          {:else}
+            <dl>
+              <div>
+                <dt>Started</dt>
+                <dd>{formatAttemptTime(lastAttempt.startedAt)}</dd>
+              </div>
+              <div>
+                <dt>Connected</dt>
+                <dd>{attemptValue(lastAttempt, 'connectedAt')}</dd>
+              </div>
+              <div>
+                <dt>Ended</dt>
+                <dd>{attemptValue(lastAttempt, 'endedAt')}</dd>
+              </div>
+              <div>
+                <dt>Outcome</dt>
+                <dd>{attemptValue(lastAttempt, 'outcome')}</dd>
+              </div>
+            </dl>
+          {/if}
+        </article>
+        <article class="card">
+          <h2>Host Trust</h2>
+          <p>{trustCard.statusLabel}</p>
+          {#if trustCard.algorithm !== null && trustCard.fingerprint !== null}
+            <dl>
+              <div>
+                <dt>Algorithm</dt>
+                <dd>{trustCard.algorithm}</dd>
+              </div>
+              <div>
+                <dt>Fingerprint</dt>
+                <dd class="fingerprint">{trustCard.fingerprint}</dd>
+              </div>
+            </dl>
+          {/if}
+          {#if trustCard.canForget}
+            <button type="button" onclick={onForgetHostKey}>{HOST_TRUST_ACTION_LABEL.forget}</button
+            >
+          {/if}
+        </article>
       </div>
     </div>
-    <article class="card">
-      <h2>Session</h2>
-      <p class="status">
-        <span class="indicator {indicator}" aria-hidden="true"></span>
-        <span>{SESSION_STATE_LABEL[session.state]}</span>
-      </p>
-      {#if session.error !== null && session.failureBanner === null}
-        <p class="error" role="alert">{session.error}</p>
-      {/if}
-      <dl>
-        <div>
-          <dt>Host</dt>
-          <dd>{profile.host}</dd>
-        </div>
-        <div>
-          <dt>Port</dt>
-          <dd>{profile.port}</dd>
-        </div>
-        <div>
-          <dt>Username</dt>
-          <dd>{profile.username}</dd>
-        </div>
-        <div>
-          <dt>Authentication Method</dt>
-          <dd>{authSummary}</dd>
-        </div>
-      </dl>
-      {#if canConnect}
-        <button type="button" onclick={onConnect}>Connect</button>
-      {/if}
-      {#if canCancel}
-        <button type="button" onclick={onCancel}>Cancel</button>
-      {/if}
-      {#if canDisconnect}
-        <button type="button" onclick={onDisconnect}>Disconnect</button>
-      {/if}
-    </article>
-    <article class="card">
-      <h2>Machine Snapshot</h2>
-      {#if snapshotCard.empty}
-        <p>No Machine Snapshot yet.</p>
-      {:else if snapshotCard.unavailable && !snapshotCard.hasFacts}
-        <p>Discovery unavailable</p>
-        {#if snapshotCard.failedRefreshAt}
-          <p class="meta">Refresh failed {formatSnapshotTime(snapshotCard.failedRefreshAt)}</p>
-        {/if}
-      {:else}
-        {#if snapshotCard.lastObserved}
-          <p class="meta">Last observed</p>
-        {/if}
-        {#if snapshotCard.unavailable}
-          <p>Discovery unavailable</p>
-        {/if}
-        <dl>
-          {#if snapshotCard.hostname}
-            <div>
-              <dt>Hostname</dt>
-              <dd>{snapshotCard.hostname}</dd>
-            </div>
-          {/if}
-          {#if snapshotCard.kernelName}
-            <div>
-              <dt>Kernel name</dt>
-              <dd>{snapshotCard.kernelName}</dd>
-            </div>
-          {/if}
-          {#if snapshotCard.kernelRelease}
-            <div>
-              <dt>Kernel release</dt>
-              <dd>{snapshotCard.kernelRelease}</dd>
-            </div>
-          {/if}
-          {#if snapshotCard.architecture}
-            <div>
-              <dt>Architecture</dt>
-              <dd>{snapshotCard.architecture}</dd>
-            </div>
-          {/if}
-        </dl>
-        {#if snapshotCard.observedAt}
-          <p class="meta">
-            {#if snapshotCard.lastObserved}
-              {formatSnapshotTime(snapshotCard.observedAt)}
-            {:else}
-              Observed {formatSnapshotTime(snapshotCard.observedAt)}
-            {/if}
-          </p>
-        {/if}
-        {#if snapshotCard.failedRefreshAt}
-          <p class="meta">Refresh failed {formatSnapshotTime(snapshotCard.failedRefreshAt)}</p>
-        {/if}
-      {/if}
-      {#if canDisconnect}
-        <button type="button" onclick={onRefreshSnapshot}>Refresh</button>
-      {/if}
-    </article>
-    <article class="card">
-      <h2>Last Attempt</h2>
-      {#if lastAttempt === null}
-        <p>No Connection Attempt yet.</p>
-      {:else}
-        <dl>
-          <div>
-            <dt>Started</dt>
-            <dd>{formatAttemptTime(lastAttempt.startedAt)}</dd>
-          </div>
-          <div>
-            <dt>Connected</dt>
-            <dd>{attemptValue(lastAttempt, 'connectedAt')}</dd>
-          </div>
-          <div>
-            <dt>Ended</dt>
-            <dd>{attemptValue(lastAttempt, 'endedAt')}</dd>
-          </div>
-          <div>
-            <dt>Outcome</dt>
-            <dd>{attemptValue(lastAttempt, 'outcome')}</dd>
-          </div>
-        </dl>
-      {/if}
-    </article>
-    <article class="card">
-      <h2>Host Trust</h2>
-      <p>{trustCard.statusLabel}</p>
-      {#if trustCard.algorithm !== null && trustCard.fingerprint !== null}
-        <dl>
-          <div>
-            <dt>Algorithm</dt>
-            <dd>{trustCard.algorithm}</dd>
-          </div>
-          <div>
-            <dt>Fingerprint</dt>
-            <dd class="fingerprint">{trustCard.fingerprint}</dd>
-          </div>
-        </dl>
-      {/if}
-      {#if trustCard.canForget}
-        <button type="button" onclick={onForgetHostKey}>{HOST_TRUST_ACTION_LABEL.forget}</button>
-      {/if}
-    </article>
   </div>
 
   <div class="terminal-pane" class:hidden={tab !== 'terminal'}>
@@ -302,6 +336,8 @@
     grid-template-rows: auto minmax(0, 1fr);
     min-height: 0;
     height: 100%;
+    container-type: inline-size;
+    container-name: workspace;
   }
 
   .tabs {
@@ -315,13 +351,14 @@
     padding: 8px 10px;
     border: 1px solid transparent;
     background: transparent;
+    color: inherit;
     cursor: pointer;
   }
 
   .tabs button.selected,
   .tabs button:focus-visible {
-    border-color: #111;
-    background: #f3f3f3;
+    border-color: var(--fg);
+    background: var(--hover);
   }
 
   .overview {
@@ -330,6 +367,32 @@
     gap: 16px;
     padding: 24px;
     overflow: auto;
+    min-width: 0;
+  }
+
+  .overview-columns {
+    display: grid;
+    grid-template-columns: minmax(13rem, 17rem) minmax(0, 1fr);
+    gap: 16px;
+    align-items: start;
+  }
+
+  @container workspace (max-width: 44rem) {
+    .overview-columns {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+
+  .summary-rail {
+    display: grid;
+    gap: 12px;
+    align-content: start;
+  }
+
+  .glyph {
+    width: 2.5rem;
+    height: 2.5rem;
+    color: var(--fg);
   }
 
   h1 {
@@ -337,17 +400,16 @@
     font-weight: 600;
   }
 
-  .header {
+  .rail-actions {
     display: flex;
-    gap: 12px;
-    align-items: start;
-    justify-content: space-between;
-    max-width: 36rem;
+    flex-wrap: wrap;
+    gap: 8px;
   }
 
-  .rail {
-    display: flex;
-    gap: 8px;
+  .detail-cards {
+    display: grid;
+    gap: 16px;
+    min-width: 0;
   }
 
   h2 {
@@ -358,31 +420,16 @@
   .card {
     display: grid;
     gap: 12px;
-    border: 1px solid #d0d0d0;
+    border: 1px solid var(--border);
     padding: 16px;
-    max-width: 36rem;
+    background: var(--bg);
+    box-shadow: none;
   }
 
   .status {
     display: flex;
     gap: 8px;
     align-items: center;
-  }
-
-  .indicator {
-    width: 0.55rem;
-    height: 0.55rem;
-    border-radius: 50%;
-    background: #888;
-  }
-
-  .indicator.pending,
-  .indicator.attention {
-    background: #c9a227;
-  }
-
-  .indicator.live {
-    background: #2f7d32;
   }
 
   dl {
@@ -398,7 +445,7 @@
 
   dt {
     font-size: 0.8rem;
-    color: #555;
+    color: var(--muted);
   }
 
   dd {
@@ -411,31 +458,31 @@
   }
 
   .error {
-    color: #b00020;
+    color: var(--status-danger);
   }
 
   .failure-banner {
     display: grid;
     gap: 8px;
-    border: 1px solid #b00020;
+    border: 1px solid var(--status-danger);
     padding: 12px 16px;
-    max-width: 36rem;
   }
 
   .failure-banner p {
-    color: #b00020;
+    color: var(--status-danger);
   }
 
   .meta {
     margin: 0;
     font-size: 0.8rem;
-    color: #555;
+    color: var(--muted);
   }
 
   .terminal-pane {
     display: grid;
     grid-template-rows: auto minmax(0, 1fr);
     min-height: 0;
+    min-width: 0;
     padding: 8px 8px 8px;
   }
 
@@ -457,7 +504,8 @@
   .term-pool {
     position: relative;
     min-height: 0;
-    background: #111;
+    min-width: 0;
+    background: var(--terminal-bg);
   }
 
   .hidden {
@@ -468,5 +516,9 @@
     font: inherit;
     padding: 8px 10px;
     justify-self: start;
+    color: inherit;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    cursor: pointer;
   }
 </style>

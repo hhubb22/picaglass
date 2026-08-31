@@ -163,7 +163,7 @@
   }
 
   fieldset {
-    border: 1px solid #d0d0d0;
+    border: 1px solid var(--border);
     padding: 12px;
   }
 
@@ -171,6 +171,13 @@
   button {
     font: inherit;
     padding: 8px 10px;
+    color: inherit;
+    background: var(--bg);
+    border: 1px solid var(--border);
+  }
+
+  button {
+    cursor: pointer;
   }
 
   .choice {
@@ -198,7 +205,7 @@
   }
 
   .hint {
-    color: #555;
+    color: var(--muted);
     font-size: 0.8rem;
   }
 
@@ -211,14 +218,14 @@
   .command {
     margin: 0;
     padding: 8px 10px;
-    border: 1px solid #d0d0d0;
+    border: 1px solid var(--border);
     overflow-x: auto;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 0.8rem;
   }
 
   .error {
-    color: #b00020;
+    color: var(--status-danger);
   }
 
   .actions {

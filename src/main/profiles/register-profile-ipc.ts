@@ -127,4 +127,10 @@ export function registerProfileIpc(api: ProfileApi): void {
     }
     return api.replacePrivateKey(profileId)
   })
+  ipcMain.handle('profiles:setSidebarCollapsed', (_event, collapsed: unknown) => {
+    if (typeof collapsed !== 'boolean') {
+      return api.load().then((workspace) => ({ ok: true as const, workspace }))
+    }
+    return api.setSidebarCollapsed(collapsed)
+  })
 }

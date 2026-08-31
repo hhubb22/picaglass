@@ -59,7 +59,7 @@
 
   dt {
     font-size: 0.8rem;
-    color: #555;
+    color: var(--muted);
   }
 
   dd {
