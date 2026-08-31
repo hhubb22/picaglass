@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { frameCliOutput, normalizeShowCommand } from './frame-cli-output'
+import { normalizeShowCommand } from '../../shared/picos/show-command'
+import { frameCliOutput } from './frame-cli-output'
 
 const VERSION_BODY = [
   'Copyright                     : Copyright (C) 2009-2026 Pica8, Inc. All Rights Reserved.',

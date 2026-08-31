@@ -1,4 +1,5 @@
 import type { ParsedResult } from './parsed-result'
+import { normalizeShowCommand } from './show-command'
 
 export const DEVICE_FACTS_COMMANDS = [
   'show version',
@@ -84,11 +85,6 @@ const FAN_ROW = /^\s*Fan\s+(\d+)\s*:\s*speed\s*=\s*(.+?),\s*PWM\s*=\s*([^,]+),\s
 const TEMP_HEADER = /^\s*Temperature:\s*$/i
 const TEMP_ROW = /^\s*(.+?)\s*:\s*([\d.]+)\s*C\s*\/\s*([\d.]+)\s*F\s*$/i
 const RPSU_ROW = /^\s*RPSU\s+(\d+)\s*:\s*(.+?)\s*$/i
-const NO_MORE = /\s*\|\s*no-more\s*$/i
-
-function commandName(command: string): string {
-  return command.trim().replace(NO_MORE, '').trim()
-}
 
 function splitLines(raw: string): string[] {
   return raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n')
@@ -276,14 +272,11 @@ function outputFor(
   fallbackRaw: string
 ): string {
   for (const entry of commands) {
-    if (commandName(entry.command) === name) {
+    if (normalizeShowCommand(entry.command) === name) {
       return entry.output
     }
   }
-  if (commands.length === 0) {
-    return fallbackRaw
-  }
-  return ''
+  return fallbackRaw
 }
 
 export function parseDeviceFacts(
@@ -296,4 +289,101 @@ export function parseDeviceFacts(
     temperatures: parseTemperatures(outputFor(commands, 'show system temperature', fallbackRaw)),
     powerSupplies: parsePowerSupplies(outputFor(commands, 'show system rpsu', fallbackRaw))
   }
+}
+
+export const VIEW_RAW_LABEL = '查看原文'
+export const PARSE_FAILED_NOTICE = '解析失败，以下为设备原文'
+
+export type ParseFailureView = {
+  reason: string
+  raw: string
+}
+
+export type DeviceFactsCard = {
+  parseFailed: boolean
+  parseFailedNotice: string | null
+  model?: string
+  softwareVersion?: string
+  serialNumber?: string
+  licenseType?: string
+  systemUptime?: string
+  hardwareId?: string
+  deviceMacAddress?: string
+  copyright?: string
+  softwareReleasedDate?: string
+  fans: FanRow[] | null
+  temperatures: TemperatureRow[] | null
+  powerSupplies: PowerSupplyRow[] | null
+  raw: string
+  viewRawLabel: string
+  versionFailure: ParseFailureView | null
+  fansFailure: ParseFailureView | null
+  temperaturesFailure: ParseFailureView | null
+  powerSuppliesFailure: ParseFailureView | null
+}
+
+function failureView<T>(result: ParsedResult<T>): ParseFailureView | null {
+  if (result.status !== 'parse-failed') {
+    return null
+  }
+  return { reason: result.reason, raw: result.raw }
+}
+
+function copyVersionFields(card: DeviceFactsCard, facts: VersionFacts): void {
+  if (facts.model !== undefined) {
+    card.model = facts.model
+  }
+  if (facts.softwareVersion !== undefined) {
+    card.softwareVersion = facts.softwareVersion
+  }
+  if (facts.serialNumber !== undefined) {
+    card.serialNumber = facts.serialNumber
+  }
+  if (facts.licenseType !== undefined) {
+    card.licenseType = facts.licenseType
+  }
+  if (facts.systemUptime !== undefined) {
+    card.systemUptime = facts.systemUptime
+  }
+  if (facts.hardwareId !== undefined) {
+    card.hardwareId = facts.hardwareId
+  }
+  if (facts.deviceMacAddress !== undefined) {
+    card.deviceMacAddress = facts.deviceMacAddress
+  }
+  if (facts.copyright !== undefined) {
+    card.copyright = facts.copyright
+  }
+  if (facts.softwareReleasedDate !== undefined) {
+    card.softwareReleasedDate = facts.softwareReleasedDate
+  }
+}
+
+export function deviceFactsCard(block: DeviceFactsBlock, raw: string): DeviceFactsCard {
+  const versionFailure = failureView(block.version)
+  const fansFailure = failureView(block.fans)
+  const temperaturesFailure = failureView(block.temperatures)
+  const powerSuppliesFailure = failureView(block.powerSupplies)
+  const parseFailed =
+    versionFailure !== null ||
+    fansFailure !== null ||
+    temperaturesFailure !== null ||
+    powerSuppliesFailure !== null
+  const card: DeviceFactsCard = {
+    parseFailed,
+    parseFailedNotice: parseFailed ? PARSE_FAILED_NOTICE : null,
+    fans: block.fans.status === 'parsed' ? block.fans.data.rows : null,
+    temperatures: block.temperatures.status === 'parsed' ? block.temperatures.data.rows : null,
+    powerSupplies: block.powerSupplies.status === 'parsed' ? block.powerSupplies.data.rows : null,
+    raw,
+    viewRawLabel: VIEW_RAW_LABEL,
+    versionFailure,
+    fansFailure,
+    temperaturesFailure,
+    powerSuppliesFailure
+  }
+  if (block.version.status === 'parsed') {
+    copyVersionFields(card, block.version.data)
+  }
+  return card
 }

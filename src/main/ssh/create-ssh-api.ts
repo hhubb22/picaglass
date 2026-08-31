@@ -793,6 +793,9 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
             finish()
           })
           nextStream.on('error', () => {
+            if (exitCode === undefined && !timedOut && buffers.total === 0) {
+              rejected = true
+            }
             finish()
           })
         })

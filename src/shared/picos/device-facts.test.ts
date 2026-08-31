@@ -3,6 +3,9 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
   DEVICE_FACTS_COMMANDS,
+  PARSE_FAILED_NOTICE,
+  VIEW_RAW_LABEL,
+  deviceFactsCard,
   deviceFactsCliCommand,
   parseDeviceFacts,
   parseFans,
@@ -213,14 +216,55 @@ describe('parseDeviceFacts', () => {
     expect(block.powerSupplies.status).toBe('parsed')
   })
 
-  it('marks a missing framed command as parse-failed with empty raw', () => {
-    const block = parseDeviceFacts([
-      { command: 'show version', output: fixture('show-version.txt') }
-    ])
+  it('marks a missing framed command as parse-failed and keeps the cleaned blob as raw', () => {
+    const version = fixture('show-version.txt')
+    const block = parseDeviceFacts([{ command: 'show version', output: version }], version)
     expect(block.fans).toEqual({
       status: 'parse-failed',
-      raw: '',
+      raw: version,
       reason: 'missing fan skeleton'
     })
+  })
+})
+
+describe('deviceFactsCard', () => {
+  it('projects parsed facts for the panel and keeps a raw toggle label', () => {
+    const block = parseDeviceFacts([
+      { command: 'show version', output: fixture('show-version.txt') },
+      { command: 'show system fan', output: fixture('show-system-fan.txt') },
+      { command: 'show system temperature', output: fixture('show-system-temperature.txt') },
+      { command: 'show system rpsu', output: fixture('show-system-rpsu.txt') }
+    ])
+    const card = deviceFactsCard(block, 'combined-raw')
+    expect(card.parseFailed).toBe(false)
+    expect(card.parseFailedNotice).toBeNull()
+    expect(card.model).toBe('S5810-28FS')
+    expect(card.hardwareId).toBeUndefined()
+    expect(card.licenseType).toBe('Uninstalled')
+    expect(card.fans).toHaveLength(3)
+    expect(card.temperatures).toHaveLength(2)
+    expect(card.powerSupplies).toHaveLength(2)
+    expect(card.raw).toBe('combined-raw')
+    expect(card.viewRawLabel).toBe(VIEW_RAW_LABEL)
+    expect(VIEW_RAW_LABEL).toBe('查看原文')
+  })
+
+  it('puts parse-failed raw on the card notice', () => {
+    const raw = 'garbled version text'
+    const card = deviceFactsCard(
+      {
+        version: { status: 'parse-failed', raw, reason: 'missing version skeleton' },
+        fans: { status: 'parsed', data: { rows: [], unparsedLines: 0 }, raw: 'Fan Status:\n' },
+        temperatures: { status: 'parse-failed', raw: '', reason: 'missing temperature skeleton' },
+        powerSupplies: { status: 'parse-failed', raw: '', reason: 'missing power supply skeleton' }
+      },
+      raw
+    )
+    expect(card.parseFailed).toBe(true)
+    expect(card.parseFailedNotice).toBe(PARSE_FAILED_NOTICE)
+    expect(PARSE_FAILED_NOTICE).toBe('解析失败，以下为设备原文')
+    expect(card.versionFailure).toEqual({ reason: 'missing version skeleton', raw })
+    expect(card.model).toBeUndefined()
+    expect(card.fans).toEqual([])
   })
 })

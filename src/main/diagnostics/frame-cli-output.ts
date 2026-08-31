@@ -1,10 +1,11 @@
+import { normalizeShowCommand } from '../../shared/picos/show-command'
+
 const EXECUTE_COMMAND = /^\s*Execute command:\s*(.+?)\s*$/
 const SYNC_LINE = /^\s*Synchronizing configuration\.\.\.OK\.\s*$/
 const WELCOME_LINE = /^\s*Welcome to PICOS\s*$/i
 const PROMPT_LINE = /^\s*\S+@\S+[>#]\s*$/
 const ISOLATED_DOT = /^\s*\.\s*$/
 const NOTICE_BANNER = /NOTICE TO USERS/i
-const NO_MORE_FILTER = /\s*\|\s*no-more\s*$/i
 
 export type FramedCommand = {
   command: string
@@ -14,10 +15,6 @@ export type FramedCommand = {
 export type FrameCliOutput = {
   cleaned: string
   commands: FramedCommand[]
-}
-
-export function normalizeShowCommand(command: string): string {
-  return command.trim().replace(NO_MORE_FILTER, '').trim()
 }
 
 function isBannerTerminator(line: string): boolean {
