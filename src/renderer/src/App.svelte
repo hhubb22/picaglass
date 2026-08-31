@@ -47,6 +47,11 @@
     type SessionConfirmation
   } from '../../shared/ssh-session-ui'
   import { ATTEMPT_OUTCOME_LABEL } from '../../shared/connection-attempt'
+  import {
+    COPY_MCP_CONFIG_LABEL,
+    mcpConfigClipboard,
+    type McpConfigResult
+  } from '../../shared/mcp-config'
   import type { HostTrustState, SshConnectResult, SshHostKeyAction } from '../../shared/ssh'
   import {
     HOST_TRUST_ACTION_LABEL,
@@ -106,6 +111,7 @@
   let hostTrust = $state<HostTrustState>({ status: 'not-remembered' })
   let replaceConfirm = $state(false)
   let forgetConfirm = $state(false)
+  let mcpConfig = $state<McpConfigResult | null>(null)
   let searchQuery = $state('')
   let liveAnnouncement = $state('')
   let sidebar = $state<{ focusSearch: () => void } | null>(null)
@@ -830,6 +836,7 @@
       disconnectConfirm !== null ||
       disconnectAllPrompt !== null ||
       closePrompt !== null ||
+      mcpConfig !== null ||
       forgetConfirm ||
       replaceConfirm ||
       (selected !== null && selectedSession.secretPrompt !== null) ||
@@ -841,6 +848,19 @@
   async function toggleSidebar(): Promise<void> {
     const result = await window.api.profiles.setSidebarCollapsed(!workspace.sidebarCollapsed)
     workspace = result.workspace
+  }
+
+  async function openMcpConfig(): Promise<void> {
+    mcpConfig = await window.api.mcp.getConfig()
+  }
+
+  async function copyMcpConfig(text: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(text)
+      mcpConfig = null
+    } catch {
+      return
+    }
   }
 
   async function revealAndFocusSearch(): Promise<void> {
@@ -1000,6 +1020,7 @@
     onSelect={(profileId) => void selectProfile(profileId)}
     onDisconnectAll={requestDisconnectAll}
     onToggleCollapsed={() => void toggleSidebar()}
+    onCopyMcpConfig={() => void openMcpConfig()}
   />
 
   <main>
@@ -1263,6 +1284,35 @@
   </AppDialog>
 {/if}
 
+{#if mcpConfig !== null}
+  <AppDialog
+    title={COPY_MCP_CONFIG_LABEL}
+    confirmLabel={mcpConfig.available ? 'Copy both' : 'Close'}
+    onConfirm={() => {
+      if (mcpConfig === null) {
+        return
+      }
+      if (!mcpConfig.available) {
+        mcpConfig = null
+        return
+      }
+      void copyMcpConfig(mcpConfigClipboard(mcpConfig))
+    }}
+    onCancel={() => {
+      mcpConfig = null
+    }}
+  >
+    {#if mcpConfig.available}
+      <p>Claude Code</p>
+      <pre class="mcp-snippet">{mcpConfig.claudeCode}</pre>
+      <p>pi</p>
+      <pre class="mcp-snippet">{mcpConfig.pi}</pre>
+    {:else}
+      <p>The Agent Interface is not running.</p>
+    {/if}
+  </AppDialog>
+{/if}
+
 <style>
   .app {
     display: grid;
@@ -1328,5 +1378,15 @@
   .fingerprint {
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     word-break: break-all;
+  }
+
+  .mcp-snippet {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.8rem;
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 0;
+    max-height: 10rem;
+    overflow: auto;
   }
 </style>

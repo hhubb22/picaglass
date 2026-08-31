@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { RendererProfile } from '../../shared/profile'
+  import { COPY_MCP_CONFIG_LABEL } from '../../shared/mcp-config'
   import {
     SESSION_STATE_LABEL,
     activeSessionCount,
@@ -19,7 +20,8 @@
     onCreate,
     onSelect,
     onDisconnectAll,
-    onToggleCollapsed
+    onToggleCollapsed,
+    onCopyMcpConfig
   }: {
     profiles: RendererProfile[]
     selectedProfileId: string | null
@@ -31,6 +33,7 @@
     onSelect: (profileId: string) => void
     onDisconnectAll: () => void
     onToggleCollapsed: () => void
+    onCopyMcpConfig: () => void
   } = $props()
 
   let searchInput = $state<HTMLInputElement | undefined>()
@@ -137,6 +140,7 @@
       <button type="button" disabled={liveCount === 0} onclick={onDisconnectAll}>
         Disconnect All
       </button>
+      <button type="button" onclick={onCopyMcpConfig}>{COPY_MCP_CONFIG_LABEL}</button>
     </div>
   </aside>
 {/if}
