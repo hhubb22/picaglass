@@ -7,12 +7,14 @@ import {
   interfaceStatusPanelView,
   l2PanelView,
   l3PanelView,
+  logsPanelView,
   needSessionMessage
 } from './diagnostics-panel'
 import type { DeviceFactsRun } from './device-facts'
 import type { InterfaceStatusRun } from './interface-status'
 import type { L2Run } from './l2'
 import type { L3Run } from './l3'
+import type { LogsRun } from './logs'
 
 const parsedRun: DeviceFactsRun = {
   kind: 'ok',
@@ -436,6 +438,92 @@ describe('l3PanelView', () => {
     expect(view.emptyArpNotice).toBe('No ARP rows.')
     expect(view.emptyNeighborsNotice).toBe('No neighbor rows.')
     expect(view.hardwareRouteCount).toBe('1')
+    expect(view.viewRawLabel).toBe(VIEW_RAW_LABEL)
+  })
+})
+
+describe('logsPanelView', () => {
+  it('shows 请先连接 when there is no active SSH Session', () => {
+    expect(logsPanelView({ kind: 'no-session' })).toEqual({
+      status: 'need-session',
+      message: needSessionMessage()
+    })
+  })
+
+  it('presents a nonzero-exit channel failure without a parse-failed notice', () => {
+    expect(
+      logsPanelView({
+        kind: 'channel-failed',
+        reason: 'nonzero-exit',
+        exitCode: 1,
+        stderrHead: "syntax error, expecting 'last'"
+      })
+    ).toEqual({
+      status: 'channel-failed',
+      message: 'Command failed (exit 1)',
+      exitCode: 1,
+      stderrHead: "syntax error, expecting 'last'"
+    })
+  })
+
+  it('surfaces an invalid line count without opening a channel', () => {
+    expect(
+      logsPanelView({
+        kind: 'invalid-lines',
+        reason: 'invalid log line count: 0'
+      })
+    ).toEqual({
+      status: 'invalid-lines',
+      message: 'invalid log line count: 0'
+    })
+  })
+
+  it('projects parsed syslog and a no-core symlink as ready data', () => {
+    const run: LogsRun = {
+      kind: 'ok',
+      raw: 'combined-raw',
+      block: {
+        syslog: {
+          status: 'parsed',
+          data: {
+            rows: [
+              {
+                timestamp: 'Aug 31 2026 09:35:29',
+                host: 'PICOS',
+                facility: 'local0',
+                severity: 'debug',
+                message: '[SIF]Get port link status, interface: ae28'
+              }
+            ],
+            unparsedLines: 0
+          },
+          raw: 'log-raw'
+        },
+        core: {
+          status: 'parsed',
+          data: {
+            path: '/pica/core',
+            target: '/mnt/open/picos/support',
+            symlink: true,
+            cores: [],
+            unparsedLines: 0
+          },
+          raw: 'core-raw'
+        }
+      }
+    }
+    const view = logsPanelView(run)
+    expect(view.status).toBe('ready')
+    if (view.status !== 'ready') {
+      return
+    }
+    expect(view.parseFailed).toBe(false)
+    expect(view.syslog).toHaveLength(1)
+    expect(view.cores).toEqual([])
+    expect(view.emptyCoresNotice).toBe('No core dumps.')
+    expect(view.corePath).toBe('/pica/core')
+    expect(view.coreTarget).toBe('/mnt/open/picos/support')
+    expect(view.coreSymlink).toBe(true)
     expect(view.viewRawLabel).toBe(VIEW_RAW_LABEL)
   })
 })
