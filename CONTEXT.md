@@ -1,6 +1,6 @@
 # Picaglass
 
-Picaglass helps an individual operator organize SSH connection settings and use them to open remote terminal sessions.
+Picaglass helps an individual operator organize SSH connection settings, open remote terminal sessions, and run read-only PicOS diagnostics on those destinations — interactively and through an embedded Agent Interface.
 
 ## Language
 
@@ -39,3 +39,15 @@ _Avoid_: Profile trust
 **Machine Snapshot**:
 The latest successfully discovered POSIX identity facts for the remote system, recorded with their observation time. It describes what Picaglass observed through a session and may be stale; it does not define Connection Profile identity.
 _Avoid_: Machine, device
+
+**Diagnostic Block**:
+One of six read-only groups of related PicOS show commands whose outputs together answer one troubleshooting question: device facts, interface status, L2 tables, L3 tables, logs, or tech-support collection.
+_Avoid_: Feature, module
+
+**Parsed Result**:
+The structured form of one command's text output. It always retains the raw text; when parsing fails it carries the raw text plus a failure marker, never silently dropped.
+_Avoid_: JSON, command output
+
+**Agent Interface**:
+The MCP server embedded in Picaglass through which an agent invokes the same read-only diagnostic capabilities available to the human operator.
+_Avoid_: API, bot
