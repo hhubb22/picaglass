@@ -1,0 +1,4 @@
+Fan Status:
+    Fan  1 : speed = 5415 RPM, PWM = 76, Forward
+    Fan  2 : speed = 5520 RPM, PWM = 76, Forward
+    Fan  3 : speed = 5535 RPM, PWM = 76, Forward

@@ -1,0 +1,8 @@
+Copyright                     : Copyright (C) 2009-2026 Pica8, Inc. All Rights Reserved.
+Model                         : S5810-28FS
+Software Version              : 9.8.7-main-EC1/86c10a20e6
+Software Released Date        : 03/19/2026
+Serial Number                 : <SERIAL>
+System Uptime                 : 164 day 6 hour 43 minute
+Hardware ID                   : License Type                  : Uninstalled
+Device MAC Address            : 02:00:00:00:00:01

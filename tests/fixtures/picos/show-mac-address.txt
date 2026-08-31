@@ -1,0 +1,5 @@
+Total entries in switching table:   0
+Static entries in switching table:  0
+Dynamic entries in switching table: 0
+VLAN      MAC address          Type         Age     Interfaces
+----      -----------------    ---------    ----    ----------------

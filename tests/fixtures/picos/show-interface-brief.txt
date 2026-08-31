@@ -1,0 +1,35 @@
+Interface       Management  Status  Flow Control  Duplex  Speed    Description
+--------------  ----------  ------  ------------  ------  -------  ------------------------------
+ge-1/1/1        Enabled     Down    Disabled      Full    Auto
+ge-1/1/2        Enabled     Down    Disabled      Full    Auto
+ge-1/1/3        Enabled     Down    Disabled      Full    Auto
+ge-1/1/4        Enabled     Down    Disabled      Full    Auto
+ge-1/1/5        Disabled    Down    Disabled      Full    Auto
+ge-1/1/6        Disabled    Down    Disabled      Full    Auto
+ge-1/1/7        Disabled    Down    Disabled      Full    Auto
+ge-1/1/8        Disabled    Down    Disabled      Full    Auto
+ge-1/1/9        Disabled    Down    Disabled      Full    Auto
+ge-1/1/10       Disabled    Down    Disabled      Full    Auto
+ge-1/1/11       Disabled    Down    Disabled      Full    Auto
+ge-1/1/12       Disabled    Down    Disabled      Full    Auto
+ge-1/1/13       Disabled    Down    Disabled      Full    Auto
+ge-1/1/14       Disabled    Down    Disabled      Full    Auto
+ge-1/1/15       Disabled    Down    Disabled      Full    Auto
+ge-1/1/16       Disabled    Down    Disabled      Full    Auto
+ge-1/1/17       Disabled    Down    Disabled      Full    Auto
+ge-1/1/18       Disabled    Down    Disabled      Full    Auto
+ge-1/1/19       Disabled    Down    Disabled      Full    Auto
+ge-1/1/20       Disabled    Down    Disabled      Full    Auto
+ge-1/1/21       Disabled    Down    Disabled      Full    Auto
+ge-1/1/22       Disabled    Down    Disabled      Full    Auto
+ge-1/1/23       Disabled    Down    Disabled      Full    Auto
+ge-1/1/24       Disabled    Down    Disabled      Full    Auto
+ge-1/1/25       Disabled    Down    Disabled      Full    Auto
+ge-1/1/26       Disabled    Down    Disabled      Full    Auto
+ge-1/1/27       Disabled    Down    Disabled      Full    Auto
+ge-1/1/28       Disabled    Down    Disabled      Full    Auto
+te-1/1/1(29)    Enabled     Down    Disabled      Full    Auto
+te-1/1/2(30)    Enabled     Down    Disabled      Full    Auto
+te-1/1/3(31)    Disabled    Down    Disabled      Full    Auto
+te-1/1/4(32)    Disabled    Down    Disabled      Full    Auto
+ae3             Enabled     Down    Disabled      Auto    Auto

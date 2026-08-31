@@ -1,0 +1,6 @@
+Destination          NextHopMac          Port
+---------------      -----------------   ---------
+192.0.2.4/32        02:00:00:00:00:01   connected
+192.0.2.0/24        02:00:00:00:00:01   connected
+0.0.0.0/0            02:00:00:00:00:01   connected
+Total route count:3

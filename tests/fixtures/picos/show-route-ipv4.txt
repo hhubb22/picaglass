@@ -1,0 +1,9 @@
+Codes: K - kernel route, C - connected, L - local, S - static,
+       R - RIP, O - OSPF, I - IS-IS, B - BGP, T - Table,
+       D - SHARP, F - PBR, t - Table-Direct,
+       > - selected route, * - FIB route, q - queued, r - rejected, b - backup
+       t - trapped, o - offload failure
+K>* 0.0.0.0/0 [0/2] via 192.0.2.5, eth0, weight 1, 20w6d07h
+K * 0.0.0.0/0 [255/8192] unreachable (blackhole), weight 1, 23w3d06h
+C>* 192.0.2.0/24 is directly connected, eth0, weight 1, 08w6d05h
+L>* 192.0.2.4/32 is directly connected, eth0, weight 1, 08w6d05h

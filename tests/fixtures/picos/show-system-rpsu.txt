@@ -1,0 +1,2 @@
+RPSU 1: Powered on
+RPSU 2: Present but powered off

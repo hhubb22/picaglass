@@ -1,0 +1,3 @@
+Temperature:
+    CPU         : 33.00 C / 91.40 F
+    Switch Chip : 27.00 C / 80.60 F
