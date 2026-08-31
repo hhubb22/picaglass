@@ -96,7 +96,10 @@ export function cancelSecretPrompt(session: ProfileSessionUi): ProfileSessionUi 
   if (session.secretPrompt === null) {
     return session
   }
-  return emptyProfileSession()
+  return {
+    ...emptyProfileSession(),
+    lastOutcome: session.lastOutcome
+  }
 }
 
 export function submitSecret(session: ProfileSessionUi): ProfileSessionUi {

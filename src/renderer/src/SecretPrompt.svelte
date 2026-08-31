@@ -37,7 +37,7 @@
         <p class="error" role="alert">{message}</p>
       {/if}
       <label>
-        Secret
+        Authentication Secret
         <input bind:value={secret} type="password" autocomplete="off" disabled={busy} />
       </label>
       <div class="actions">

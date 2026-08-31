@@ -247,6 +247,10 @@ function isMissingPassphrase(message: string): boolean {
   return message.includes('Encrypted') && message.includes('no passphrase given')
 }
 
+function isBadPassphrase(message: string): boolean {
+  return message.toLowerCase().includes('bad passphrase')
+}
+
 function parseConnect(req: SshConnectRequest): ParsedConnect {
   const profileId = req.profileId.trim()
   if (profileId.length === 0) {
@@ -527,6 +531,9 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
         )
         if (!result.ok && result.reason === 'invalid' && isMissingPassphrase(result.message)) {
           return { ok: false, reason: 'secret-required', kind: 'passphrase' }
+        }
+        if (!result.ok && result.reason === 'invalid' && isBadPassphrase(result.message)) {
+          return { ok: false, reason: 'auth-failed', message: result.message }
         }
         return result
       } finally {

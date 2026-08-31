@@ -238,6 +238,9 @@
   }
 
   async function submitAuthSecret(profileId: string, secret: string): Promise<void> {
+    if (secret.length === 0) {
+      return
+    }
     setSession(profileId, submitSecret(sessionOf(profileId)))
     await runConnect(profileId, secret)
   }
@@ -257,9 +260,9 @@
     })
     ensureTerminalId(profileId)
     await tick()
-    const nextLog = beginAttempt(transcripts[profileId] ?? [], new Date(), previous)
-    transcripts[profileId] = nextLog
-    const separator = nextLog[nextLog.length - 1]
+    const nextTranscript = beginAttempt(transcripts[profileId] ?? [], new Date(), previous)
+    transcripts[profileId] = nextTranscript
+    const separator = nextTranscript[nextTranscript.length - 1]
     if (separator !== undefined && separator.source === 'local' && separator.kind === 'separator') {
       registry.writeLocal(profileId, formatSeparatorText(separator))
     }
@@ -395,7 +398,12 @@
 
   function leaveCreate(): void {
     resetDraft()
-    pane = workspace.selectedProfileId === null ? 'empty' : 'profile'
+    const selectedId = workspace.selectedProfileId
+    pane = selectedId === null ? 'empty' : 'profile'
+    if (selectedId !== null && deferredTerminal[selectedId] === true) {
+      tabs[selectedId] = tabWhenSelectingProfile(tabs[selectedId], true)
+      deferredTerminal[selectedId] = false
+    }
   }
 
   function confirmDiscard(): void {

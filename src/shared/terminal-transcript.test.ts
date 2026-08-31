@@ -13,29 +13,29 @@ import {
 describe('terminal transcript', () => {
   it('records a local separator that remote output cannot forge', () => {
     const started = new Date('2026-08-31T12:00:00.000Z')
-    let log = beginAttempt([], started, null)
-    const [separator] = log
+    let transcript = beginAttempt([], started, null)
+    const [separator] = transcript
     if (separator === undefined || separator.source !== 'local' || separator.kind !== 'separator') {
       throw new Error('expected a local separator')
     }
     const fake = new TextEncoder().encode(formatSeparatorText(separator))
-    log = appendRemote(log, fake)
+    transcript = appendRemote(transcript, fake)
 
-    expect(log).toHaveLength(2)
-    expect(isLocalTranscriptEntry(log[0])).toBe(true)
-    expect(isLocalTranscriptEntry(log[1])).toBe(false)
-    expect(log[0]).toMatchObject({
+    expect(transcript).toHaveLength(2)
+    expect(isLocalTranscriptEntry(transcript[0])).toBe(true)
+    expect(isLocalTranscriptEntry(transcript[1])).toBe(false)
+    expect(transcript[0]).toMatchObject({
       source: 'local',
       kind: 'separator',
       previousOutcome: null
     })
-    expect(log[1]).toMatchObject({ source: 'remote' })
+    expect(transcript[1]).toMatchObject({ source: 'remote' })
   })
 
   it('includes the previous outcome on a later attempt separator', () => {
     const started = new Date('2026-08-31T13:00:00.000Z')
-    const log = beginAttempt([], started, 'remote session ended')
-    const [separator] = log
+    const transcript = beginAttempt([], started, 'remote session ended')
+    const [separator] = transcript
     if (separator === undefined || separator.source !== 'local' || separator.kind !== 'separator') {
       throw new Error('expected a local separator')
     }
@@ -45,15 +45,15 @@ describe('terminal transcript', () => {
   })
 
   it('appends an ended-session banner as a local entry', () => {
-    let log = appendRemote([], Uint8Array.from([0x61]))
-    log = endSession(log, 'closed')
-    expect(log[1]).toEqual({
+    let transcript = appendRemote([], Uint8Array.from([0x61]))
+    transcript = endSession(transcript, 'closed')
+    expect(transcript[1]).toEqual({
       source: 'local',
       kind: 'ended',
       message: ENDED_REMOTE_MESSAGE
     })
-    log = endSession([log[0]], 'error')
-    expect(log[1]).toMatchObject({
+    transcript = endSession([transcript[0]], 'error')
+    expect(transcript[1]).toMatchObject({
       source: 'local',
       kind: 'ended',
       message: ENDED_NETWORK_MESSAGE
@@ -61,7 +61,7 @@ describe('terminal transcript', () => {
   })
 
   it('clears local output immediately', () => {
-    const log = clearTranscript()
-    expect(log).toEqual([])
+    const transcript = clearTranscript()
+    expect(transcript).toEqual([])
   })
 })

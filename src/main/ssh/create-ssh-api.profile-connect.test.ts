@@ -282,6 +282,32 @@ describe('connectFromProfile', () => {
     expect(server.shellOpened()).toBe(false)
   })
 
+  it('returns auth-failed for a wrong passphrase and lets a retry open the session', async () => {
+    userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-profile-ssh-'))
+    const hostKey = generateHostKey(userDataPath)
+    const clientKeyPath = join(userDataPath, 'id_ed25519')
+    execFileSync('ssh-keygen', ['-t', 'ed25519', '-f', clientKeyPath, '-N', 'key-passphrase', '-q'])
+    server = await startServer(hostKey.pem)
+    const { profiles, ssh } = await wired()
+    const profileId = await saveKeyProfile(profiles, clientKeyPath, server.port)
+    const sender: SshSender = { id: 1 }
+
+    const failed = await ssh.connectFromProfile(
+      { profileId, secret: 'wrong-pass', cols: 80, rows: 24 },
+      sender
+    )
+    expect(failed).toEqual({
+      ok: false,
+      reason: 'auth-failed',
+      message: expect.any(String)
+    })
+    expect(server.liveConnections()).toBe(0)
+
+    const sessionId = await openFromProfile(ssh, profileId, sender, 'key-passphrase')
+    expect(sessionId).toEqual(expect.any(String))
+    expect(server.shellOpened()).toBe(true)
+  })
+
   it('opens a live SSH Session from an encrypted private-key profile with a passphrase', async () => {
     userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-profile-ssh-'))
     const hostKey = generateHostKey(userDataPath)

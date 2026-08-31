@@ -55,6 +55,18 @@ describe('ssh session UI', () => {
     expect(next).toEqual(emptyProfileSession())
   })
 
+  it('canceling a retry prompt keeps the previous outcome and starts no new attempt', () => {
+    const failed = applyConnectResult(connecting({ secretKind: 'password' }), {
+      ok: false,
+      reason: 'auth-failed',
+      message: 'All configured authentication methods failed'
+    })
+    const next = cancelSecretPrompt(failed)
+    expect(next.state).toBe('no-active-session')
+    expect(next.secretPrompt).toBe(null)
+    expect(next.lastOutcome).toBe('authentication failed')
+  })
+
   it('submitting a secret enters Connecting', () => {
     const prompted = beginConnect(emptyProfileSession(), { method: 'password' })
     const next = submitSecret(prompted)
@@ -114,6 +126,18 @@ describe('ssh session UI', () => {
     expect(failed.secretPrompt?.message).toBe(
       'Authentication failed. Check the password and try again.'
     )
+  })
+
+  it('reopens the passphrase prompt after a bad passphrase', () => {
+    const failed = applyConnectResult(connecting({ secretKind: 'passphrase' }), {
+      ok: false,
+      reason: 'auth-failed',
+      message: 'OpenSSH key integrity check failed -- bad passphrase?'
+    })
+    expect(failed.secretPrompt).toEqual({
+      kind: 'passphrase',
+      message: friendlyAuthFailure('passphrase')
+    })
   })
 
   it('does not reopen a secret prompt when an unencrypted key fails authentication', () => {

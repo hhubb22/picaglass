@@ -36,12 +36,12 @@ export function formatSeparatorText(entry: TranscriptSeparator): string {
 }
 
 export function beginAttempt(
-  log: readonly TranscriptEntry[],
+  transcript: readonly TranscriptEntry[],
   startedAt: Date,
   previousOutcome: string | null
 ): TranscriptEntry[] {
   return [
-    ...log,
+    ...transcript,
     {
       source: 'local',
       kind: 'separator',
@@ -52,18 +52,18 @@ export function beginAttempt(
 }
 
 export function appendRemote(
-  log: readonly TranscriptEntry[],
+  transcript: readonly TranscriptEntry[],
   bytes: Uint8Array
 ): TranscriptEntry[] {
-  return [...log, { source: 'remote', bytes: Uint8Array.from(bytes) }]
+  return [...transcript, { source: 'remote', bytes: Uint8Array.from(bytes) }]
 }
 
 export function endSession(
-  log: readonly TranscriptEntry[],
+  transcript: readonly TranscriptEntry[],
   reason: 'closed' | 'error'
 ): TranscriptEntry[] {
   return [
-    ...log,
+    ...transcript,
     {
       source: 'local',
       kind: 'ended',
