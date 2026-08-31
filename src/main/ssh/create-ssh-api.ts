@@ -49,6 +49,7 @@ export type SshApi = {
   write: (sessionId: string, data: Uint8Array, sender: SshSender) => void
   resize: (sessionId: string, cols: number, rows: number, sender: SshSender) => void
   disconnect: (sessionId: string, sender: SshSender) => Promise<void>
+  cancel: (profileId: string, sender: SshSender) => Promise<void>
   disposeSender: (senderId: number) => void
   dispose: () => void
 }
@@ -57,12 +58,13 @@ type SshReady =
   | { ok: true }
   | {
       ok: false
-      reason: 'auth-failed' | 'network' | 'timeout'
+      reason: 'auth-failed' | 'network' | 'timeout' | 'canceled'
       message: string
     }
 
 type SshSession = {
   senderId: number
+  profileId: string
   client: Client
   verify: ((valid: boolean) => void) | undefined
   host: string
@@ -177,6 +179,7 @@ function persistKnownHost(userDataPath: string, host: string, port: number, key:
 type ParsedConnect =
   | {
       ok: true
+      profileId: string
       host: string
       port: number
       username: string
@@ -225,6 +228,10 @@ function privateKeyError(privateKey: Buffer, passphrase: string | undefined): st
 }
 
 function parseConnect(req: SshConnectRequest): ParsedConnect {
+  const profileId = req.profileId.trim()
+  if (profileId.length === 0) {
+    return invalid('invalid profile')
+  }
   const host = req.host.trim()
   if (host.length === 0 || host.includes('://') || host.includes('/')) {
     return invalid('invalid host')
@@ -239,6 +246,7 @@ function parseConnect(req: SshConnectRequest): ParsedConnect {
   }
   return {
     ok: true,
+    profileId,
     host,
     port,
     username,
@@ -251,15 +259,27 @@ function parseConnect(req: SshConnectRequest): ParsedConnect {
 
 export function createSshApi(deps: CreateSshApiDeps): SshApi {
   const sessions = new Map<string, SshSession>()
+  const sessionByProfile = new Map<string, string>()
   const keyFiles = new Map<string, { senderId: number; filePath: string }>()
   const authTimeoutMs = deps.authTimeoutMs ?? 20_000
 
-  function dropSession(sessionId: string): void {
+  function forgetSession(sessionId: string): SshSession | undefined {
     const session = sessions.get(sessionId)
+    if (session === undefined) {
+      return undefined
+    }
+    sessions.delete(sessionId)
+    if (sessionByProfile.get(session.profileId) === sessionId) {
+      sessionByProfile.delete(session.profileId)
+    }
+    return session
+  }
+
+  function dropSession(sessionId: string): void {
+    const session = forgetSession(sessionId)
     if (session === undefined) {
       return
     }
-    sessions.delete(sessionId)
     session.clearAuthTimeout()
     const closed: SshReady & { ok: false } = {
       ok: false,
@@ -432,7 +452,11 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
         return Promise.resolve(invalid(known.message))
       }
 
-      dropSender(sender.id)
+      // Occupancy is per Connection Profile, not per sender: a second connect on a live
+      // profile must bounce so the existing SSH Session stays put.
+      if (sessionByProfile.has(parsed.profileId)) {
+        return Promise.resolve(invalid('session already exists'))
+      }
 
       const sessionId = randomUUID()
       const client = new Client()
@@ -446,6 +470,7 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
       }
       const session: SshSession = {
         senderId: sender.id,
+        profileId: parsed.profileId,
         client,
         verify: undefined,
         host: parsed.host,
@@ -463,6 +488,7 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
         ended: false
       }
       sessions.set(sessionId, session)
+      sessionByProfile.set(parsed.profileId, sessionId)
       client.on('ready', () => {
         settleReady({ ok: true })
       })
@@ -550,7 +576,7 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
               }
               if (known.key !== undefined) {
                 session.clearAuthTimeout()
-                sessions.delete(sessionId)
+                forgetSession(sessionId)
                 settle({
                   ok: false,
                   reason: 'host-changed',
@@ -672,6 +698,28 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
       if (session === undefined || session.senderId !== sender.id) {
         return
       }
+      dropSession(sessionId)
+    },
+
+    async cancel(profileId, sender) {
+      const sessionId = sessionByProfile.get(profileId.trim())
+      if (sessionId === undefined) {
+        return
+      }
+      const session = sessions.get(sessionId)
+      if (session === undefined || session.senderId !== sender.id) {
+        return
+      }
+      if (session.stream !== undefined) {
+        return
+      }
+      const canceled: SshReady & { ok: false } = {
+        ok: false,
+        reason: 'canceled',
+        message: 'canceled'
+      }
+      session.settleOpen?.(canceled)
+      session.failHandshake?.(canceled)
       dropSession(sessionId)
     },
 

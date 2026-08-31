@@ -26,6 +26,9 @@ function parseConnectRequest(value: unknown): SshConnectRequest | undefined {
   if (!isRecord(value)) {
     return undefined
   }
+  if (typeof value.profileId !== 'string') {
+    return undefined
+  }
   if (typeof value.host !== 'string' || typeof value.username !== 'string') {
     return undefined
   }
@@ -37,6 +40,7 @@ function parseConnectRequest(value: unknown): SshConnectRequest | undefined {
     return undefined
   }
   const req: SshConnectRequest = {
+    profileId: value.profileId,
     host: value.host,
     username: value.username,
     auth,
@@ -76,6 +80,12 @@ export function registerSshIpc(api: SshApi): void {
       return
     }
     return api.disconnect(sessionId, { id: event.sender.id })
+  })
+  ipcMain.handle('ssh:cancel', (event, profileId: unknown) => {
+    if (typeof profileId !== 'string') {
+      return
+    }
+    return api.cancel(profileId, { id: event.sender.id })
   })
   ipcMain.on('ssh:write', (event, sessionId: unknown, data: unknown) => {
     if (typeof sessionId !== 'string' || !(data instanceof Uint8Array)) {

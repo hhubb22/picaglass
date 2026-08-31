@@ -14,6 +14,7 @@ const api: RendererApi = {
       ipcRenderer.send('ssh:resize', sessionId, cols, rows)
     },
     disconnect: (sessionId) => ipcRenderer.invoke('ssh:disconnect', sessionId),
+    cancel: (profileId) => ipcRenderer.invoke('ssh:cancel', profileId),
     onData: (handler) => {
       const listener = (_event: unknown, payload: unknown): void => {
         if (typeof payload !== 'object' || payload === null) {

@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { createSshEventInbox } from './ssh-event-inbox'
 import { runSshConnect, syncSshConnectInbox } from './ssh-connect-ui'
-import type { SshConnectRequest, SshConnectResult } from './ssh'
+import { SINGLE_FORM_PROFILE_ID, type SshConnectRequest, type SshConnectResult } from './ssh'
 
 function req(): SshConnectRequest {
   return {
+    profileId: SINGLE_FORM_PROFILE_ID,
     host: '127.0.0.1',
     username: 'tester',
     auth: { method: 'password', password: 'secret' },

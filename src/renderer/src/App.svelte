@@ -5,6 +5,7 @@
   import '@xterm/xterm/css/xterm.css'
   import { createSshEventInbox } from '../../shared/ssh-event-inbox'
   import { runSshConnect, syncSshConnectInbox } from '../../shared/ssh-connect-ui'
+  import { SINGLE_FORM_PROFILE_ID } from '../../shared/ssh'
 
   let host = $state('')
   let port = $state('')
@@ -84,6 +85,7 @@
         sessionId: previous,
         currentSessionId: () => sessionId,
         req: {
+          profileId: SINGLE_FORM_PROFILE_ID,
           host,
           port: port.trim() === '' ? undefined : Number(port),
           username,
@@ -292,7 +294,7 @@
         />
       </label>
 
-      <button type="submit" disabled={formLocked()}>连接</button>
+      <button type="submit" disabled={formLocked() || sessionId !== null}>连接</button>
       {#if sessionId !== null}
         <button type="button" onclick={() => void disconnect()} disabled={busy}>断开</button>
       {/if}

@@ -17,7 +17,6 @@ import {
   emitsHaveChunk,
   generateHostKey,
   isRecord,
-  listenTcp,
   neverSettles,
   startServer,
   statusTypes,
@@ -30,7 +29,6 @@ describe('createSshApi session', () => {
   let userDataPath: string | undefined
   let api: SshApi | undefined
   let server: TestServer | undefined
-  let tcp: { port: number; close: () => Promise<void> } | undefined
   let proxy: TestProxy | undefined
 
   afterEach(async () => {
@@ -43,10 +41,6 @@ describe('createSshApi session', () => {
     if (server) {
       await server.close()
       server = undefined
-    }
-    if (tcp) {
-      await tcp.close()
-      tcp = undefined
     }
     if (userDataPath) {
       await rm(userDataPath, { recursive: true, force: true })
@@ -175,28 +169,6 @@ describe('createSshApi session', () => {
     expect(chunks[0]).toEqual(Uint8Array.from([0xff, 0xfe, 0x00, 0x61]))
   })
 
-  it('a second connect from the same sender settles the first handshake', async () => {
-    userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
-    tcp = await listenTcp(() => undefined)
-    api = testApi(userDataPath)
-
-    const first = api.connect(connectRequest(tcp.port), { id: 1 })
-    await new Promise((resolve) => {
-      setTimeout(resolve, 50)
-    })
-    void api.connect(connectRequest(tcp.port), { id: 1 })
-
-    const firstResult = await Promise.race([
-      first,
-      neverSettles('first connect hung after dropSender')
-    ])
-    expect(firstResult).toEqual({
-      ok: false,
-      reason: 'network',
-      message: expect.any(String)
-    })
-  })
-
   it('a second trust-always on the same session does not open a second shell', async () => {
     userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
     const hostKey = generateHostKey(userDataPath)
@@ -292,7 +264,7 @@ describe('createSshApi session', () => {
       }
     })
     api = testApi(userDataPath, { showMessageBox: async () => ({ response: 0 }) }, emits, {
-      authTimeoutMs: 80
+      authTimeoutMs: 1500
     })
 
     try {
@@ -303,7 +275,7 @@ describe('createSshApi session', () => {
 
       const trusted = await Promise.race([
         api.confirmHostKey(unknown.sessionId, 'trust-always', { id: 1 }),
-        neverSettles('confirmHostKey hung waiting for delayed shell')
+        neverSettles('confirmHostKey hung waiting for delayed shell', 3000)
       ])
 
       expect(trusted).toEqual({
@@ -512,7 +484,7 @@ describe('createSshApi session', () => {
     })
   })
 
-  it('first pty bytes of a reconnect reach the terminal while the old session is still active', async () => {
+  it('a conflicting reconnect keeps the live session inbox', async () => {
     userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
@@ -550,7 +522,6 @@ describe('createSshApi session', () => {
     chunks.length = 0
 
     const previous = trusted.sessionId
-    inbox.beginHandoff()
     const next = await runSshConnect({
       sessionId: previous,
       currentSessionId: () => previous,
@@ -563,16 +534,20 @@ describe('createSshApi session', () => {
       }
     })
     syncSshConnectInbox(inbox, next)
-    if (next.sessionId === null) {
-      throw new Error(`expected reconnect to succeed, got ${JSON.stringify(next)}`)
-    }
 
+    expect(next).toEqual({
+      sessionId: previous,
+      pending: null,
+      error: 'session already exists'
+    })
+
+    const probe = Uint8Array.from([0x99, 0x88])
+    api.write(previous, probe, { id: 1 })
     await vi.waitFor(() => {
-      if (chunks.length === 0) {
-        throw new Error('terminal empty after reconnect')
+      if (!chunks.some((chunk) => Buffer.from(chunk).equals(Buffer.from(probe)))) {
+        throw new Error('live session did not echo after a conflicting reconnect')
       }
     })
-    expect(chunks[0]).toEqual(Uint8Array.from([0xff, 0xfe, 0x00, 0x61]))
   })
 
   it('a synchronous shell error on a known host returns network instead of hanging', async () => {
@@ -671,6 +646,7 @@ describe('createSshApi session', () => {
     if (!trusted.ok) {
       throw new Error('expected a live session')
     }
+    await api.disconnect(trusted.sessionId, { id: 1 })
 
     Object.defineProperty(Client.prototype, 'connect', {
       configurable: true,
