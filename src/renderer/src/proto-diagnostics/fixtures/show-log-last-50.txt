@@ -1,0 +1,50 @@
+Aug 31 2026 09:35:29 PICOS  local0.debug : [SIF]Get port link status, interface: ae28
+Aug 31 2026 09:35:29 PICOS  local0.debug : [SIF]Get port mode, interface: ae28
+Aug 31 2026 09:35:29 PICOS  local0.debug : [SIF]Get port pvid, interface: ae28
+Aug 31 2026 09:35:29 PICOS  local0.debug : [SIF]Get port link status, interface: ae29
+Aug 31 2026 09:35:29 PICOS  local0.debug : [SIF]Get port mode, interface: ae29
+Aug 31 2026 09:35:29 PICOS  local0.debug : [SIF]Get port pvid, interface: ae29
+Aug 31 2026 09:35:29 PICOS  local0.debug : [SIF]Get port link status, interface: ae30
+Aug 31 2026 09:35:29 PICOS  local0.debug : [SIF]Get port mode, interface: ae30
+Aug 31 2026 09:35:29 PICOS  local0.debug : [SIF]Get port pvid, interface: ae30
+Aug 31 2026 09:35:29 PICOS  local0.debug : [SIF]Get port link status, interface: ae31
+Aug 31 2026 09:35:29 PICOS  local0.debug : [SIF]Get port mode, interface: ae31
+Aug 31 2026 09:35:29 PICOS  local0.debug : [SIF]Get port pvid, interface: ae31
+Aug 31 2026 09:35:29 PICOS  local0.debug : [SIF]Get port link status, interface: ae32
+Aug 31 2026 09:35:29 PICOS  local0.debug : [SIF]Get port mode, interface: ae32
+Aug 31 2026 09:35:29 PICOS  local0.debug : [SIF]Get port pvid, interface: ae32
+Aug 31 2026 09:35:29 PICOS sshd auth.info : Received disconnect from 192.0.2.1 port 57033:11: disconnected by user
+Aug 31 2026 09:35:29 PICOS sshd auth.info : Disconnected from user admin 192.0.2.1 port 57033
+Aug 31 2026 09:35:30 PICOS sshd auth.info : Accepted password for admin from 192.0.2.1 port 57035 ssh2
+Aug 31 2026 09:35:31 PICOS  local0.warning : [RTRMGR][Operational Command File: /pica/etc/S5810-28FS/templates/xorpsh.cmds line 711]: Executable file not found: license
+Aug 31 2026 09:35:33 PICOS sshd auth.info : Received disconnect from 192.0.2.1 port 57035:11: disconnected by user
+Aug 31 2026 09:35:33 PICOS sshd auth.info : Disconnected from user admin 192.0.2.1 port 57035
+Aug 31 2026 09:35:34 PICOS sshd auth.info : Accepted password for admin from 192.0.2.1 port 57038 ssh2
+Aug 31 2026 09:35:35 PICOS  local0.warning : [RTRMGR][Operational Command File: /pica/etc/S5810-28FS/templates/xorpsh.cmds line 711]: Executable file not found: license
+Aug 31 2026 09:35:35 PICOS  local0.debug : [SIF]get_ip_routing_global enable
+Aug 31 2026 09:35:35 PICOS  local0.debug : [SIF]get_ip_routing_global done, enabled:true
+Aug 31 2026 09:35:35 PICOS  local0.debug : [SIF]get egress interfaces
+Aug 31 2026 09:35:35 PICOS  local0.warning : [LIBXORP][eventloop], callback func stat_update_ports:xrl_lcmgr_node.cc:3986, run time 0.17 seconds
+Aug 31 2026 09:35:36 PICOS sshd auth.info : Received disconnect from 192.0.2.1 port 57038:11: disconnected by user
+Aug 31 2026 09:35:36 PICOS sshd auth.info : Disconnected from user admin 192.0.2.1 port 57038
+Aug 31 2026 09:35:36 PICOS sshd auth.info : Accepted password for admin from 192.0.2.1 port 57040 ssh2
+Aug 31 2026 09:35:37 PICOS  local0.warning : [RTRMGR][Operational Command File: /pica/etc/S5810-28FS/templates/xorpsh.cmds line 711]: Executable file not found: license
+Aug 31 2026 09:35:37 PICOS  local0.debug : [SIF]get_ip_routing_global enable
+Aug 31 2026 09:35:37 PICOS  local0.debug : [SIF]get_ip_routing_global done, enabled:true
+Aug 31 2026 09:35:37 PICOS  local0.debug : [SIF]get egress interfaces
+Aug 31 2026 09:35:38 PICOS sshd auth.info : Received disconnect from 192.0.2.1 port 57040:11: disconnected by user
+Aug 31 2026 09:35:38 PICOS sshd auth.info : Disconnected from user admin 192.0.2.1 port 57040
+Aug 31 2026 09:35:38 PICOS sshd auth.info : Accepted password for admin from 192.0.2.1 port 57046 ssh2
+Aug 31 2026 09:35:38 PICOS  local0.debug : [SIF]destroy egress timer expires
+Aug 31 2026 09:35:38 PICOS  local0.debug : [SIF]No forwarding outgoing port found when sending arp request for address 192.0.2.2 on vlan15
+Aug 31 2026 09:35:38 PICOS  local0.debug : [SIF]No forwarding outgoing port found when sending arp request for address 192.0.2.3 on vlan15
+Aug 31 2026 09:35:38 PICOS  local0.debug : [SIF]sending arp sync requset timer expires
+Aug 31 2026 09:35:39 PICOS  local0.warning : [RTRMGR][Operational Command File: /pica/etc/S5810-28FS/templates/xorpsh.cmds line 711]: Executable file not found: license
+Aug 31 2026 09:35:39 PICOS sshd auth.info : Received disconnect from 192.0.2.1 port 57046:11: disconnected by user
+Aug 31 2026 09:35:39 PICOS sshd auth.info : Disconnected from user admin 192.0.2.1 port 57046
+Aug 31 2026 09:35:40 PICOS sshd auth.info : Accepted password for admin from 192.0.2.1 port 57048 ssh2
+Aug 31 2026 09:35:41 PICOS  local0.warning : [RTRMGR][Operational Command File: /pica/etc/S5810-28FS/templates/xorpsh.cmds line 711]: Executable file not found: license
+Aug 31 2026 09:35:41 PICOS sshd auth.info : Received disconnect from 192.0.2.1 port 57048:11: disconnected by user
+Aug 31 2026 09:35:41 PICOS sshd auth.info : Disconnected from user admin 192.0.2.1 port 57048
+Aug 31 2026 09:35:42 PICOS sshd auth.info : Accepted password for admin from 192.0.2.1 port 57051 ssh2
+Aug 31 2026 09:35:43 PICOS  local0.warning : [RTRMGR][Operational Command File: /pica/etc/S5810-28FS/templates/xorpsh.cmds line 711]: Executable file not found: license

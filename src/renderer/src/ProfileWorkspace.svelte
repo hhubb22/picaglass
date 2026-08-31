@@ -19,6 +19,7 @@
   import type { TerminalRegistry } from './terminal-registry'
   import ProfileTerminalHost from './ProfileTerminalHost.svelte'
   import SessionStateMark from './SessionStateMark.svelte'
+  import ProtoDiagnostics from './proto-diagnostics/ProtoDiagnostics.svelte'
 
   let {
     profile,
@@ -316,6 +317,9 @@
       {/each}
     </div>
   </div>
+  {#if import.meta.env.DEV}
+    <ProtoDiagnostics />
+  {/if}
 </section>
 
 <style>
@@ -324,6 +328,7 @@
     grid-template-rows: auto minmax(0, 1fr);
     min-height: 0;
     height: 100%;
+    position: relative;
     container-type: inline-size;
     container-name: workspace;
   }
