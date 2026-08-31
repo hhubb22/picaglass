@@ -72,7 +72,7 @@ describe('runSshConnect', () => {
     expect(chunks).toEqual([Uint8Array.from([0x62])])
   })
 
-  it('does not expose host-key trust controls when a host key changed', async () => {
+  it('exposes host-key trust controls when a host key changed', async () => {
     const next = await runSshConnect({
       sessionId: null,
       currentSessionId: () => null,
@@ -80,15 +80,22 @@ describe('runSshConnect', () => {
       connect: async (): Promise<SshConnectResult> => ({
         ok: false,
         reason: 'host-changed',
+        sessionId: 'pending-2',
         fingerprint: 'SHA256:changed',
-        algorithm: 'ssh-ed25519'
+        algorithm: 'ssh-ed25519',
+        previousFingerprint: 'SHA256:old',
+        previousAlgorithm: 'ssh-ed25519'
       })
     })
 
     expect(next).toEqual({
       sessionId: null,
-      pending: null,
-      error: 'host-changed'
+      pending: {
+        sessionId: 'pending-2',
+        fingerprint: 'SHA256:changed',
+        algorithm: 'ssh-ed25519'
+      },
+      error: null
     })
   })
 

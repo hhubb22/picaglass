@@ -4,13 +4,17 @@
   let {
     title,
     confirmLabel,
+    extraLabel,
     onConfirm,
+    onExtra,
     onCancel,
     children
   }: {
     title: string
     confirmLabel: string
+    extraLabel?: string
     onConfirm: () => void
+    onExtra?: () => void
     onCancel: () => void
     children: Snippet
   } = $props()
@@ -21,6 +25,9 @@
     <p id="dialog-title">{title}</p>
     {@render children()}
     <div class="actions">
+      {#if extraLabel !== undefined && onExtra !== undefined}
+        <button type="button" onclick={onExtra}>{extraLabel}</button>
+      {/if}
       <button type="button" onclick={onConfirm}>{confirmLabel}</button>
       <button type="button" onclick={onCancel}>Cancel</button>
     </div>

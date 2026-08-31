@@ -7,6 +7,8 @@
     type ProfileSessionUi
   } from '../../shared/ssh-session-ui'
   import type { TranscriptEntry } from '../../shared/terminal-transcript'
+  import type { HostTrustState } from '../../shared/ssh'
+  import { hostTrustCard, HOST_TRUST_ACTION_LABEL } from '../../shared/host-trust-ui'
   import type { TerminalRegistry } from './terminal-registry'
   import ProfileTerminalHost from './ProfileTerminalHost.svelte'
 
@@ -17,12 +19,14 @@
     transcript,
     terminalIds,
     registry,
+    hostTrust,
     onTab,
     onConnect,
     onDisconnect,
     onClearTerminal,
     onEdit,
-    onDelete
+    onDelete,
+    onForgetHostKey
   }: {
     profile: RendererProfile
     tab: WorkspaceTab
@@ -30,12 +34,14 @@
     transcript: TranscriptEntry[]
     terminalIds: string[]
     registry: TerminalRegistry
+    hostTrust: HostTrustState
     onTab: (tab: WorkspaceTab) => void
     onConnect: () => void
     onDisconnect: () => void
     onClearTerminal: () => void
     onEdit: () => void
     onDelete: () => void
+    onForgetHostKey: () => void
   } = $props()
 
   const authSummary = $derived(
@@ -46,6 +52,7 @@
   const showTerminalEmpty = $derived(idle && transcript.length === 0)
   const canConnect = $derived(idle && session.secretPrompt === null && !session.missingPrivateKey)
   const canDisconnect = $derived(session.state === 'connected')
+  const trustCard = $derived(hostTrustCard(hostTrust))
 </script>
 
 <section class="workspace">
@@ -98,6 +105,25 @@
       {/if}
       {#if canDisconnect}
         <button type="button" onclick={onDisconnect}>Disconnect</button>
+      {/if}
+    </article>
+    <article class="card">
+      <h2>Host Trust</h2>
+      <p>{trustCard.statusLabel}</p>
+      {#if trustCard.algorithm !== null && trustCard.fingerprint !== null}
+        <dl>
+          <div>
+            <dt>Algorithm</dt>
+            <dd>{trustCard.algorithm}</dd>
+          </div>
+          <div>
+            <dt>Fingerprint</dt>
+            <dd class="fingerprint">{trustCard.fingerprint}</dd>
+          </div>
+        </dl>
+      {/if}
+      {#if trustCard.canForget}
+        <button type="button" onclick={onForgetHostKey}>{HOST_TRUST_ACTION_LABEL.forget}</button>
       {/if}
     </article>
   </div>
@@ -234,6 +260,11 @@
 
   dd {
     margin: 0;
+  }
+
+  .fingerprint {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    word-break: break-all;
   }
 
   .error {

@@ -119,9 +119,31 @@ describe('ssh session UI', () => {
     })
     expect(next.state).toBe('verification-required')
     expect(next.pendingHostKey).toEqual({
+      kind: 'unknown',
       sessionId: 'pending-1',
       fingerprint: 'SHA256:abc',
       algorithm: 'ssh-ed25519'
+    })
+  })
+
+  it('shows Verification required for a changed host key with old and new fingerprints', () => {
+    const next = applyConnectResult(connecting(), {
+      ok: false,
+      reason: 'host-changed',
+      sessionId: 'pending-2',
+      fingerprint: 'SHA256:new',
+      algorithm: 'ssh-ed25519',
+      previousFingerprint: 'SHA256:old',
+      previousAlgorithm: 'ssh-ed25519'
+    })
+    expect(next.state).toBe('verification-required')
+    expect(next.pendingHostKey).toEqual({
+      kind: 'changed',
+      sessionId: 'pending-2',
+      fingerprint: 'SHA256:new',
+      algorithm: 'ssh-ed25519',
+      previousFingerprint: 'SHA256:old',
+      previousAlgorithm: 'ssh-ed25519'
     })
   })
 

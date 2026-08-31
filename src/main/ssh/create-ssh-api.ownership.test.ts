@@ -43,8 +43,7 @@ describe('createSshApi ownership', () => {
     execFileSync('ssh-keygen', ['-t', 'ed25519', '-f', clientKeyPath, '-N', '', '-q'])
     server = await startServer(hostKey.pem)
     api = testApi(userDataPath, {
-      showOpenDialog: async () => ({ canceled: false, filePaths: [clientKeyPath] }),
-      showMessageBox: async () => ({ response: 0 })
+      showOpenDialog: async () => ({ canceled: false, filePaths: [clientKeyPath] })
     })
 
     const live = await liveSession(api, server, { id: 1 })
@@ -84,8 +83,7 @@ describe('createSshApi ownership', () => {
       showOpenDialog: async () => {
         dialogs += 1
         return { canceled: true, filePaths: [clientKeyPath] }
-      },
-      showMessageBox: async () => ({ response: 0 })
+      }
     })
 
     expect(await api.pickPrivateKey({ id: 1 })).toBeNull()
@@ -106,8 +104,7 @@ describe('createSshApi ownership', () => {
     execFileSync('ssh-keygen', ['-t', 'ed25519', '-f', clientKeyPath, '-N', '', '-q'])
     server = await startServer(hostKey.pem)
     api = testApi(userDataPath, {
-      showOpenDialog: async () => ({ canceled: false, filePaths: [clientKeyPath] }),
-      showMessageBox: async () => ({ response: 0 })
+      showOpenDialog: async () => ({ canceled: false, filePaths: [clientKeyPath] })
     })
 
     const live = await liveSession(api, server, { id: 1 })
@@ -139,7 +136,7 @@ describe('createSshApi ownership', () => {
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
     const emits: CapturedEmit[] = []
-    api = testApi(userDataPath, { showMessageBox: async () => ({ response: 0 }) }, emits)
+    api = testApi(userDataPath, undefined, emits)
 
     const owner: SshSender = { id: 1 }
     const intruder: SshSender = { id: 2 }
@@ -176,13 +173,7 @@ describe('createSshApi ownership', () => {
     userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
-    let messageBoxes = 0
-    api = testApi(userDataPath, {
-      showMessageBox: async () => {
-        messageBoxes += 1
-        return { response: 0 }
-      }
-    })
+    api = testApi(userDataPath)
 
     const owner: SshSender = { id: 1 }
     const intruder: SshSender = { id: 2 }
@@ -195,13 +186,11 @@ describe('createSshApi ownership', () => {
     expect(stolenTrust).toEqual({ ok: false, reason: 'invalid', message: 'unknown session' })
     const stolenAbort = await api.confirmHostKey(paused.sessionId, 'abort', intruder)
     expect(stolenAbort).toEqual({ ok: false, reason: 'invalid', message: 'unknown session' })
-    expect(messageBoxes).toBe(0)
     expect(server.shellOpened()).toBe(false)
     expect(existsSync(join(userDataPath, 'ssh', 'known_hosts'))).toBe(false)
 
     const trusted = await api.confirmHostKey(paused.sessionId, 'trust-always', owner)
     expect(trusted).toEqual({ ok: true, sessionId: paused.sessionId })
-    expect(messageBoxes).toBe(1)
     expect(existsSync(join(userDataPath, 'ssh', 'known_hosts'))).toBe(true)
   })
 
@@ -210,7 +199,7 @@ describe('createSshApi ownership', () => {
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
     const emits: CapturedEmit[] = []
-    api = testApi(userDataPath, { showMessageBox: async () => ({ response: 0 }) }, emits)
+    api = testApi(userDataPath, undefined, emits)
 
     const owner: SshSender = { id: 1 }
     const live = await liveSession(api, server, owner)
@@ -233,7 +222,7 @@ describe('createSshApi ownership', () => {
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
     const emits: CapturedEmit[] = []
-    api = testApi(userDataPath, { showMessageBox: async () => ({ response: 0 }) }, emits)
+    api = testApi(userDataPath, undefined, emits)
 
     const closing = await liveSession(api, server, { id: 1 }, 'profile-a')
     const staying = await liveSession(api, server, { id: 2 }, 'profile-b')
@@ -259,7 +248,7 @@ describe('createSshApi ownership', () => {
     userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
-    api = testApi(userDataPath, { showMessageBox: async () => ({ response: 0 }) })
+    api = testApi(userDataPath)
 
     await liveSession(api, server, { id: 1 }, 'profile-a')
     await liveSession(api, server, { id: 2 }, 'profile-b')

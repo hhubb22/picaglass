@@ -20,14 +20,6 @@ function openFileDialog(
   return dialog.showOpenDialog(options)
 }
 
-function askQuestion(options: Electron.MessageBoxOptions): Promise<Electron.MessageBoxReturnValue> {
-  const parent = BrowserWindow.getFocusedWindow()
-  if (parent) {
-    return dialog.showMessageBox(parent, options)
-  }
-  return dialog.showMessageBox(options)
-}
-
 function createWindow(sshApi: ReturnType<typeof createSshApi>): void {
   const mainWindow = new BrowserWindow({
     width: 1180,
@@ -78,8 +70,7 @@ app.whenReady().then(() => {
   const sshApi = createSshApi({
     userDataPath: app.getPath('userData'),
     dialogs: {
-      showOpenDialog: openFileDialog,
-      showMessageBox: askQuestion
+      showOpenDialog: openFileDialog
     },
     emitTo: (senderId, channel, payload) => {
       const contents = webContents.fromId(senderId)

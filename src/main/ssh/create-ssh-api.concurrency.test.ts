@@ -46,7 +46,7 @@ describe('createSshApi concurrency', () => {
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
     const emits: CapturedEmit[] = []
-    api = testApi(userDataPath, { showMessageBox: async () => ({ response: 0 }) }, emits)
+    api = testApi(userDataPath, undefined, emits)
 
     const owner: SshSender = { id: 1 }
     const live = await liveSession(api, server, owner)
@@ -77,7 +77,7 @@ describe('createSshApi concurrency', () => {
     userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
-    api = testApi(userDataPath, { showMessageBox: async () => ({ response: 0 }) })
+    api = testApi(userDataPath)
 
     const live = await liveSession(api, server, { id: 1 })
     const rejected = await api.connect(
@@ -136,7 +136,7 @@ describe('createSshApi concurrency', () => {
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
     const emits: CapturedEmit[] = []
-    api = testApi(userDataPath, { showMessageBox: async () => ({ response: 0 }) }, emits)
+    api = testApi(userDataPath, undefined, emits)
 
     const owner: SshSender = { id: 1 }
     const firstId = await liveSession(api, server, owner, 'profile-a')
@@ -178,7 +178,7 @@ describe('createSshApi concurrency', () => {
     server = await startServer(hostKey.pem)
     tcp = await listenTcp(() => undefined)
     const emits: CapturedEmit[] = []
-    api = testApi(userDataPath, { showMessageBox: async () => ({ response: 0 }) }, emits)
+    api = testApi(userDataPath, undefined, emits)
 
     const owner: SshSender = { id: 1 }
     const live = await liveSession(api, server, owner, 'profile-live')
@@ -239,7 +239,7 @@ describe('createSshApi concurrency', () => {
     userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
-    api = testApi(userDataPath, { showMessageBox: async () => ({ response: 0 }) })
+    api = testApi(userDataPath)
 
     const owner: SshSender = { id: 1 }
     const live = await liveSession(api, server, owner)
@@ -256,7 +256,7 @@ describe('createSshApi concurrency', () => {
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
     tcp = await listenTcp(() => undefined)
-    api = testApi(userDataPath, { showMessageBox: async () => ({ response: 0 }) })
+    api = testApi(userDataPath)
 
     const pending = api.connect(connectRequest(tcp.port), { id: 1 })
     await new Promise((resolve) => {
@@ -274,7 +274,7 @@ describe('createSshApi concurrency', () => {
     userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
-    api = testApi(userDataPath, { showMessageBox: async () => ({ response: 0 }) })
+    api = testApi(userDataPath)
 
     const owner: SshSender = { id: 1 }
     const unknown = await api.connect(connectRequest(server.port), owner)
@@ -299,7 +299,7 @@ describe('createSshApi concurrency', () => {
     userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
-    api = testApi(userDataPath, { showMessageBox: async () => ({ response: 0 }) })
+    api = testApi(userDataPath)
 
     const owner: SshSender = { id: 1 }
     const unknown = await api.connect(connectRequest(server.port), owner)

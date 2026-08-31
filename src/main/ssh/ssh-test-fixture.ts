@@ -274,7 +274,6 @@ export function testApi(
     userDataPath,
     dialogs: {
       showOpenDialog: async () => ({ canceled: true, filePaths: [] }),
-      showMessageBox: async () => ({ response: 1 }),
       ...dialogs
     },
     emitTo: (_senderId, channel, payload) => {
@@ -373,7 +372,6 @@ export function testApiWithInbox(
     userDataPath,
     dialogs: {
       showOpenDialog: async () => ({ canceled: true, filePaths: [] }),
-      showMessageBox: async () => ({ response: 1 }),
       ...dialogs
     },
     emitTo: (_senderId, channel, payload) => {
