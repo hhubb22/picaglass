@@ -29,6 +29,7 @@ import {
   type UpdateProfileResult,
   type WorkspaceNotice
 } from '../../shared/profile'
+import { parseStoredSnapshot, type MachineSnapshot } from '../../shared/machine-snapshot'
 
 export type ProfileDialogs = {
   showOpenDialog: (options: {
@@ -56,6 +57,7 @@ export type ProfileConnectTarget = {
   port: number
   username: string
   auth: StoredAuth
+  automaticDiscovery: boolean
 }
 
 export type ProfileApi = {
@@ -68,6 +70,8 @@ export type ProfileApi = {
   replacePrivateKey: (profileId: string) => Promise<ReplacePrivateKeyResult>
   getConnectTarget: (profileId: string) => Promise<ProfileConnectTarget | undefined>
   recordAttempt: (profileId: string, summary: ConnectionAttemptSummary) => Promise<void>
+  getSnapshot: (profileId: string) => Promise<MachineSnapshot | undefined>
+  recordSnapshot: (profileId: string, snapshot: MachineSnapshot) => Promise<boolean>
   setSessionHooks: (hooks: ProfileSessionHooks) => void
 }
 
@@ -90,7 +94,7 @@ type StoredProfile = {
 type StoredDocument = {
   version: number
   profiles: StoredProfile[]
-  latestSnapshots: Record<string, unknown>
+  latestSnapshots: Record<string, MachineSnapshot>
   latestAttempts: Record<string, ConnectionAttemptSummary>
   lastSelectedProfileId: string | null
   sidebarCollapsed: boolean
@@ -211,7 +215,15 @@ function parseDocument(text: string): StoredDocument | undefined {
     }
     profiles.push(profile)
   }
-  const latestSnapshots = isRecord(raw.latestSnapshots) ? { ...raw.latestSnapshots } : {}
+  const latestSnapshots: Record<string, MachineSnapshot> = {}
+  if (isRecord(raw.latestSnapshots)) {
+    for (const [profileId, value] of Object.entries(raw.latestSnapshots)) {
+      const snapshot = parseStoredSnapshot(value)
+      if (snapshot !== undefined) {
+        latestSnapshots[profileId] = snapshot
+      }
+    }
+  }
   const latestAttempts = parseAttempts(raw.latestAttempts)
   const lastSelectedProfileId =
     typeof raw.lastSelectedProfileId === 'string' || raw.lastSelectedProfileId === null
@@ -285,6 +297,7 @@ function authKey(auth: StoredAuth): string {
 
 function toRenderer(
   profile: StoredProfile,
+  snapshot: MachineSnapshot | undefined,
   attempt: ConnectionAttemptSummary | undefined
 ): RendererProfile {
   // Full private-key paths stay in the main-process document. The renderer only gets a label.
@@ -299,7 +312,8 @@ function toRenderer(
         ? { method: 'password' }
         : { method: 'privateKey', label: basename(profile.auth.filePath) },
     automaticDiscovery: profile.automaticDiscovery,
-    lastAttempt: attempt ?? null
+    lastAttempt: attempt ?? null,
+    snapshot: snapshot ?? null
   }
   if (profile.displayName !== undefined) {
     projected.displayName = profile.displayName
@@ -310,7 +324,13 @@ function toRenderer(
 function project(document: StoredDocument, notice: WorkspaceNotice | null): ProfileWorkspace {
   const sorted = sortProfilesByLabel(document.profiles)
   return {
-    profiles: sorted.map((profile) => toRenderer(profile, document.latestAttempts[profile.id])),
+    profiles: sorted.map((profile) =>
+      toRenderer(
+        profile,
+        document.latestSnapshots[profile.id],
+        document.latestAttempts[profile.id]
+      )
+    ),
     selectedProfileId: resolveSelectedProfileId(document.lastSelectedProfileId, document.profiles),
     notice
   }
@@ -327,10 +347,14 @@ function cloneAttempts(
 }
 
 function cloneDocument(document: StoredDocument): StoredDocument {
+  const latestSnapshots: Record<string, MachineSnapshot> = {}
+  for (const [profileId, snapshot] of Object.entries(document.latestSnapshots)) {
+    latestSnapshots[profileId] = { ...snapshot }
+  }
   return {
     version: document.version,
     profiles: document.profiles.map((profile) => ({ ...profile, auth: { ...profile.auth } })),
-    latestSnapshots: { ...document.latestSnapshots },
+    latestSnapshots,
     latestAttempts: cloneAttempts(document.latestAttempts),
     lastSelectedProfileId: document.lastSelectedProfileId,
     sidebarCollapsed: document.sidebarCollapsed
@@ -688,7 +712,8 @@ export function createProfileApi(deps: CreateProfileApiDeps): ProfileApi {
         host: profile.host,
         port: profile.port,
         username: profile.username,
-        auth: { ...profile.auth }
+        auth: { ...profile.auth },
+        automaticDiscovery: profile.automaticDiscovery
       }
     },
 
@@ -707,6 +732,28 @@ export function createProfileApi(deps: CreateProfileApiDeps): ProfileApi {
       const next = cloneDocument(document ?? emptyDocument())
       next.latestAttempts[profileId] = parsed
       await commit(next)
+    },
+
+    async getSnapshot(profileId) {
+      await ensureLoaded()
+      const snapshot = (document ?? emptyDocument()).latestSnapshots[profileId]
+      if (snapshot === undefined) {
+        return undefined
+      }
+      return { ...snapshot }
+    },
+
+    async recordSnapshot(profileId, snapshot) {
+      await ensureLoaded()
+      const exists = (document ?? emptyDocument()).profiles.some(
+        (profile) => profile.id === profileId
+      )
+      if (!exists) {
+        return false
+      }
+      const next = cloneDocument(document ?? emptyDocument())
+      next.latestSnapshots[profileId] = { ...snapshot }
+      return commit(next)
     },
 
     async pickPrivateKey() {

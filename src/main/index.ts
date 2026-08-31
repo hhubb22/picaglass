@@ -80,7 +80,11 @@ app.whenReady().then(() => {
       contents.send(channel, structuredClone(payload))
     },
     resolveProfile: (profileId) => profileApi.getConnectTarget(profileId),
-    recordAttempt: (profileId, summary) => profileApi.recordAttempt(profileId, summary)
+    recordAttempt: (profileId, summary) => profileApi.recordAttempt(profileId, summary),
+    readSnapshot: (profileId) => profileApi.getSnapshot(profileId),
+    recordSnapshot: async (profileId, snapshot) => {
+      await profileApi.recordSnapshot(profileId, snapshot)
+    }
   })
   profileApi.setSessionHooks({
     isOccupied: (profileId) => sshApi.hasSession(profileId),

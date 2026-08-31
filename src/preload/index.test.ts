@@ -49,8 +49,10 @@ describe('preload bridge', () => {
       'forgetHostKey',
       'hostTrust',
       'onData',
+      'onSnapshot',
       'onStatus',
       'pickPrivateKey',
+      'refreshDiscovery',
       'resize',
       'secretRequirement',
       'write'

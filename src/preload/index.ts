@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { RendererApi, SshStatusEvent } from '../shared/ssh'
+import type { MachineSnapshotEvent, RendererApi, SshStatusEvent } from '../shared/ssh'
 import type { CreateProfileInput, UpdateProfileInput } from '../shared/profile'
+import { parseStoredSnapshot } from '../shared/machine-snapshot'
 
 const api: RendererApi = {
   ssh: {
@@ -19,6 +20,7 @@ const api: RendererApi = {
     },
     disconnect: (sessionId) => ipcRenderer.invoke('ssh:disconnect', sessionId),
     cancel: (profileId) => ipcRenderer.invoke('ssh:cancel', profileId),
+    refreshDiscovery: (profileId) => ipcRenderer.invoke('ssh:refreshDiscovery', profileId),
     onData: (handler) => {
       const listener = (_event: unknown, payload: unknown): void => {
         if (typeof payload !== 'object' || payload === null) {
@@ -51,6 +53,29 @@ const api: RendererApi = {
       ipcRenderer.on('ssh:status', listener)
       return () => {
         ipcRenderer.removeListener('ssh:status', listener)
+      }
+    },
+    onSnapshot: (handler) => {
+      const listener = (_event: unknown, payload: unknown): void => {
+        if (typeof payload !== 'object' || payload === null) {
+          return
+        }
+        if (!('profileId' in payload) || !('snapshot' in payload)) {
+          return
+        }
+        if (typeof payload.profileId !== 'string') {
+          return
+        }
+        const snapshot = parseStoredSnapshot(payload.snapshot)
+        if (snapshot === undefined) {
+          return
+        }
+        const event: MachineSnapshotEvent = { profileId: payload.profileId, snapshot }
+        handler(event)
+      }
+      ipcRenderer.on('ssh:snapshot', listener)
+      return () => {
+        ipcRenderer.removeListener('ssh:snapshot', listener)
       }
     }
   },

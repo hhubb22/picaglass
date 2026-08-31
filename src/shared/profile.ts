@@ -1,4 +1,5 @@
 import type { ConnectionAttemptSummary } from './connection-attempt'
+import type { MachineSnapshot } from './machine-snapshot'
 
 export type ProfileLabelSource = {
   displayName?: string
@@ -327,6 +328,7 @@ export type RendererProfile = {
   auth: RendererProfileAuth
   automaticDiscovery: boolean
   lastAttempt: ConnectionAttemptSummary | null
+  snapshot?: MachineSnapshot | null
 }
 
 export type WorkspaceNotice =
