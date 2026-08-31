@@ -212,7 +212,10 @@ describe('tech_support diagnostic execution', () => {
     )
   }
 
-  function collectionExec(pollsUntilDone: number): (command: string) => TestExecResponse {
+  function collectionExec(
+    pollsUntilDone: number,
+    hold?: { running: boolean }
+  ): (command: string) => TestExecResponse {
     let polls = 0
     return (command) => {
       if (command === techSupportStartCommand()) {
@@ -220,7 +223,7 @@ describe('tech_support diagnostic execution', () => {
       }
       if (command === techSupportPollCommand()) {
         polls += 1
-        if (polls < pollsUntilDone) {
+        if (hold?.running || polls < pollsUntilDone) {
           return { stdout: pollStdout({ running: true, bytes: 1024 }) }
         }
         return { stdout: pollStdout({ running: false, bytes: ARTIFACT_BYTES }) }
@@ -257,7 +260,9 @@ describe('tech_support diagnostic execution', () => {
 
   it('collects in the background with nohup, waits for the process to exit, pulls, verifies size, and deletes the remote copy', async () => {
     const emits: CapturedEmit[] = []
-    const { profiles, ssh, diagnostics, dir } = await wired(emits, collectionExec(2), {
+    // Hold running across waitFor: two mock polls otherwise finish inside one 50ms interval.
+    const hold = { running: true }
+    const { profiles, ssh, diagnostics, dir } = await wired(emits, collectionExec(2, hold), {
       sftp: { [REMOTE_PATH]: ARTIFACT_BODY }
     })
     const sender: SshSender = { id: 1 }
@@ -288,6 +293,7 @@ describe('tech_support diagnostic execution', () => {
     expect(diagnostics.getTechSupport(profileId).phase).toBe('collecting')
     expect(diagnostics.getTechSupport(profileId).artifact).toBeNull()
     expect(diagnostics.getTechSupport(profileId).lastRemoteBytes).toBe(1024)
+    hold.running = false
 
     await waitForPhase(diagnostics, profileId, 'done')
     const snapshot = diagnostics.getTechSupport(profileId)
@@ -472,6 +478,7 @@ describe('tech_support diagnostic execution', () => {
   it('resumes polling after the SSH Session disconnects (断开续查)', async () => {
     const emits: CapturedEmit[] = []
     let polls = 0
+    let allowExit = false
     const { profiles, ssh, diagnostics, dir } = await wired(
       emits,
       (command) => {
@@ -480,7 +487,7 @@ describe('tech_support diagnostic execution', () => {
         }
         if (command === techSupportPollCommand()) {
           polls += 1
-          if (polls === 1) {
+          if (!allowExit) {
             return { stdout: pollStdout({ running: true, bytes: 1024 }) }
           }
           return { stdout: pollStdout({ running: false, bytes: ARTIFACT_BYTES }) }
@@ -503,6 +510,7 @@ describe('tech_support diagnostic execution', () => {
       }
     })
 
+    const pollsBeforeDisconnect = polls
     await ssh.disconnect(sessionId, sender)
     expect(ssh.hasLiveSession(profileId)).toBe(false)
     expect(diagnostics.getTechSupport(profileId).phase).toBe('collecting')
@@ -515,9 +523,10 @@ describe('tech_support diagnostic execution', () => {
     expect(diagnostics.getTechSupport(profileId).progress.map((event) => event.message)).toContain(
       TECH_SUPPORT_WAITING_FOR_SESSION
     )
-    expect(polls).toBe(1)
+    expect(polls).toBe(pollsBeforeDisconnect)
 
     await reconnect(ssh, profileId, sender)
+    allowExit = true
     await waitForPhase(diagnostics, profileId, 'done')
     const snapshot = diagnostics.getTechSupport(profileId)
     expect(snapshot.artifact?.byteSize).toBe(ARTIFACT_BYTES)
