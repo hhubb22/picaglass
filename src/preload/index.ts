@@ -5,6 +5,7 @@ import type { CreateProfileInput } from '../shared/profile'
 const api: RendererApi = {
   ssh: {
     pickPrivateKey: () => ipcRenderer.invoke('ssh:pickPrivateKey'),
+    secretRequirement: (profileId) => ipcRenderer.invoke('ssh:secretRequirement', profileId),
     connect: (req) => ipcRenderer.invoke('ssh:connect', req),
     confirmHostKey: (sessionId, action) =>
       ipcRenderer.invoke('ssh:confirmHostKey', sessionId, action),

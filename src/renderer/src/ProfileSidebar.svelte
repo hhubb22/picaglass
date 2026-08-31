@@ -1,19 +1,31 @@
 <script lang="ts">
   import type { RendererProfile } from '../../shared/profile'
+  import {
+    SESSION_STATE_LABEL,
+    emptyProfileSession,
+    sessionIndicator,
+    type ProfileSessionUi
+  } from '../../shared/ssh-session-ui'
 
   let {
     profiles,
     selectedProfileId,
     creating,
+    sessions,
     onCreate,
     onSelect
   }: {
     profiles: RendererProfile[]
     selectedProfileId: string | null
     creating: boolean
+    sessions: Record<string, ProfileSessionUi>
     onCreate: () => void
     onSelect: (profileId: string) => void
   } = $props()
+
+  function view(profileId: string): ProfileSessionUi {
+    return sessions[profileId] ?? emptyProfileSession()
+  }
 </script>
 
 <aside class="sidebar">
@@ -27,13 +39,19 @@
   {:else}
     <ul>
       {#each profiles as profile (profile.id)}
+        {@const session = view(profile.id)}
+        {@const indicator = sessionIndicator(session.state)}
         <li>
           <button
             type="button"
             class:selected={profile.id === selectedProfileId && !creating}
             onclick={() => onSelect(profile.id)}
           >
-            {profile.label}
+            <span class="indicator {indicator}" aria-hidden="true"></span>
+            <span class="copy">
+              <span class="label">{profile.label}</span>
+              <span class="state">{SESSION_STATE_LABEL[session.state]}</span>
+            </span>
           </button>
         </li>
       {/each}
@@ -61,7 +79,8 @@
   }
 
   .hint,
-  .empty-list {
+  .empty-list,
+  .state {
     color: #555;
     font-size: 0.875rem;
   }
@@ -82,6 +101,42 @@
     border: 1px solid transparent;
     background: transparent;
     cursor: pointer;
+  }
+
+  li button {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 8px;
+    align-items: start;
+  }
+
+  .copy {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .indicator {
+    width: 0.55rem;
+    height: 0.55rem;
+    margin-top: 0.4rem;
+    border-radius: 50%;
+    background: #888;
+  }
+
+  .indicator.pending,
+  .indicator.attention {
+    background: #c9a227;
+  }
+
+  .indicator.live {
+    background: #2f7d32;
   }
 
   button.selected,

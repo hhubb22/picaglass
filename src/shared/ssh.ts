@@ -21,18 +21,30 @@ export type SshConnectRequest = {
   term?: string
 }
 
+export type SshProfileConnectRequest = {
+  profileId: string
+  secret?: string
+  cols: number
+  rows: number
+}
+
 export type SshConnectResult =
   | { ok: true; sessionId: string }
   | { ok: false; reason: 'host-unknown'; sessionId: string; fingerprint: string; algorithm: string }
   | { ok: false; reason: 'host-changed'; fingerprint: string; algorithm: string }
+  | { ok: false; reason: 'secret-required'; kind: 'password' | 'passphrase' }
   | {
       ok: false
       reason: 'auth-failed' | 'network' | 'timeout' | 'invalid' | 'canceled'
       message: string
     }
 
-/** Occupancy key used by session-manager tests until connect-from-profile (#10) supplies real ids. */
+/** Occupancy key used by low-level session-manager tests that do not create a saved profile. */
 export const SINGLE_FORM_PROFILE_ID = 'single-form'
+
+export type SshSecretRequirement =
+  | { ok: true; kind: 'password' | 'passphrase' | 'none' }
+  | { ok: false; reason: 'unknown-profile' | 'cannot-read-key' }
 
 export type SshHostKeyAction = 'trust-always' | 'abort'
 
@@ -48,7 +60,8 @@ export type SshKeyPick = { keyRef: string; label: string }
 export type RendererApi = {
   ssh: {
     pickPrivateKey: () => Promise<SshKeyPick | null>
-    connect: (req: SshConnectRequest) => Promise<SshConnectResult>
+    secretRequirement: (profileId: string) => Promise<SshSecretRequirement>
+    connect: (req: SshProfileConnectRequest) => Promise<SshConnectResult>
     confirmHostKey: (sessionId: string, action: SshHostKeyAction) => Promise<SshConnectResult>
     write: (sessionId: string, data: Uint8Array) => void
     resize: (sessionId: string, cols: number, rows: number) => void

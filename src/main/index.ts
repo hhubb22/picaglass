@@ -69,6 +69,12 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
+  const profileApi = createProfileApi({
+    userDataPath: app.getPath('userData'),
+    dialogs: {
+      showOpenDialog: openFileDialog
+    }
+  })
   const sshApi = createSshApi({
     userDataPath: app.getPath('userData'),
     dialogs: {
@@ -81,13 +87,8 @@ app.whenReady().then(() => {
         return
       }
       contents.send(channel, structuredClone(payload))
-    }
-  })
-  const profileApi = createProfileApi({
-    userDataPath: app.getPath('userData'),
-    dialogs: {
-      showOpenDialog: openFileDialog
-    }
+    },
+    resolveProfile: (profileId) => profileApi.getConnectTarget(profileId)
   })
   registerSshIpc(sshApi)
   registerProfileIpc(profileApi)

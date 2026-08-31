@@ -50,6 +50,7 @@ describe('preload bridge', () => {
       'onStatus',
       'pickPrivateKey',
       'resize',
+      'secretRequirement',
       'write'
     ])
     const profiles = (api as { profiles: unknown }).profiles
