@@ -11,6 +11,7 @@ export type SshAuth =
   | { method: 'privateKey'; keyRef: string; passphrase?: string }
 
 export type SshConnectRequest = {
+  profileId: string
   host: string
   port?: number
   username: string
@@ -24,7 +25,14 @@ export type SshConnectResult =
   | { ok: true; sessionId: string }
   | { ok: false; reason: 'host-unknown'; sessionId: string; fingerprint: string; algorithm: string }
   | { ok: false; reason: 'host-changed'; fingerprint: string; algorithm: string }
-  | { ok: false; reason: 'auth-failed' | 'network' | 'timeout' | 'invalid'; message: string }
+  | {
+      ok: false
+      reason: 'auth-failed' | 'network' | 'timeout' | 'invalid' | 'canceled'
+      message: string
+    }
+
+/** Occupancy key used by session-manager tests until connect-from-profile (#10) supplies real ids. */
+export const SINGLE_FORM_PROFILE_ID = 'single-form'
 
 export type SshHostKeyAction = 'trust-always' | 'abort'
 
@@ -45,6 +53,7 @@ export type RendererApi = {
     write: (sessionId: string, data: Uint8Array) => void
     resize: (sessionId: string, cols: number, rows: number) => void
     disconnect: (sessionId: string) => Promise<void>
+    cancel: (profileId: string) => Promise<void>
     onData: (handler: (sessionId: string, chunk: Uint8Array) => void) => () => void
     onStatus: (handler: (event: SshStatusEvent) => void) => () => void
   }

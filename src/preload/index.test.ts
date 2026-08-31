@@ -42,6 +42,7 @@ describe('preload bridge', () => {
       throw new Error('expected an ssh object')
     }
     expect(Object.keys(ssh).sort()).toEqual([
+      'cancel',
       'confirmHostKey',
       'connect',
       'disconnect',
