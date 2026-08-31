@@ -3,6 +3,14 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { Client, type ClientChannel, utils as ssh2Utils } from 'ssh2'
+import {
+  MACHINE_SNAPSHOT_COMMAND,
+  MACHINE_SNAPSHOT_OUTPUT_CAP_BYTES,
+  MACHINE_SNAPSHOT_TIMEOUT_MS,
+  applyDiscoveryRun,
+  interpretDiscoveryOutput,
+  type MachineSnapshot
+} from '../../shared/machine-snapshot'
 import type {
   ForgetHostKeyResult,
   HostTrustState,
@@ -35,6 +43,7 @@ export type ResolvedProfile = {
   port: number
   username: string
   auth: { method: 'password' } | { method: 'privateKey'; filePath: string }
+  automaticDiscovery: boolean
 }
 
 export type CreateSshApiDeps = {
@@ -42,9 +51,12 @@ export type CreateSshApiDeps = {
   dialogs: SshDialogs
   emitTo: (senderId: number, channel: string, payload: unknown) => void
   authTimeoutMs?: number
+  discoveryTimeoutMs?: number
   resolveProfile?: (profileId: string) => Promise<ResolvedProfile | undefined>
   now?: () => Date
   recordAttempt?: (profileId: string, summary: ConnectionAttemptSummary) => Promise<void>
+  readSnapshot?: (profileId: string) => Promise<MachineSnapshot | undefined>
+  recordSnapshot?: (profileId: string, snapshot: MachineSnapshot) => Promise<void>
 }
 
 export type SshApi = {
@@ -66,6 +78,7 @@ export type SshApi = {
   resize: (sessionId: string, cols: number, rows: number, sender: SshSender) => void
   disconnect: (sessionId: string, sender: SshSender) => Promise<void>
   cancel: (profileId: string, sender: SshSender) => Promise<void>
+  refreshDiscovery: (profileId: string, sender: SshSender) => Promise<void>
   hasSession: (profileId: string) => boolean
   dropProfileSession: (profileId: string) => void
   disposeSender: (senderId: number) => void
@@ -103,6 +116,10 @@ type SshSession = {
   attemptConnectedAt: string | undefined
   attemptFinalized: boolean
   operatorDisconnect: boolean
+  autoDiscoveryStarted: boolean
+  discoveryInFlight: boolean
+  discoveryStream: ClientChannel | undefined
+  discoveryTimer: ReturnType<typeof setTimeout> | undefined
 }
 
 function invalid(message: string): { ok: false; reason: 'invalid'; message: string } {
@@ -472,6 +489,7 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
       return
     }
     session.clearAuthTimeout()
+    abortDiscovery(session)
     // A live shell without a recorded end stays on disk so launch recovery can
     // mark it interrupted. Handshake failures already finalized their outcome.
     if (!session.attemptFinalized && session.stream !== undefined) {
@@ -610,6 +628,7 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
                   type: 'connected'
                 })
                 finish({ ok: true, sessionId })
+                void startAutoDiscovery(sessionId)
               })
             }
           )
@@ -623,6 +642,149 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
         }
       })
     })
+  }
+
+  function abortDiscovery(session: SshSession): void {
+    if (session.discoveryTimer !== undefined) {
+      clearTimeout(session.discoveryTimer)
+      session.discoveryTimer = undefined
+    }
+    const stream = session.discoveryStream
+    session.discoveryStream = undefined
+    if (stream !== undefined) {
+      try {
+        stream.destroy()
+      } catch {
+        // Discovery-channel teardown must never take down the SSH Session.
+      }
+    }
+    session.discoveryInFlight = false
+  }
+
+  async function startAutoDiscovery(sessionId: string): Promise<void> {
+    const session = sessions.get(sessionId)
+    if (session === undefined || session.autoDiscoveryStarted) {
+      return
+    }
+    session.autoDiscoveryStarted = true
+    const profile = await deps.resolveProfile?.(session.profileId)
+    if (profile === undefined || profile.automaticDiscovery !== true) {
+      return
+    }
+    await runDiscovery(sessionId)
+  }
+
+  async function runDiscovery(sessionId: string): Promise<void> {
+    const session = sessions.get(sessionId)
+    if (session === undefined || session.stream === undefined || session.discoveryInFlight) {
+      return
+    }
+    session.discoveryInFlight = true
+    const timeoutMs = deps.discoveryTimeoutMs ?? MACHINE_SNAPSHOT_TIMEOUT_MS
+    const collected = await new Promise<{
+      stdout: Buffer
+      stderr: Buffer
+    }>((resolve) => {
+      const buffers: { stdout: Buffer; stderr: Buffer; total: number } = {
+        stdout: Buffer.alloc(0),
+        stderr: Buffer.alloc(0),
+        total: 0
+      }
+      let settled = false
+      const finish = (): void => {
+        if (settled) {
+          return
+        }
+        settled = true
+        if (session.discoveryTimer !== undefined) {
+          clearTimeout(session.discoveryTimer)
+          session.discoveryTimer = undefined
+        }
+        const stream = session.discoveryStream
+        session.discoveryStream = undefined
+        if (stream !== undefined) {
+          try {
+            stream.destroy()
+          } catch {
+            // Isolation: destroying the exec channel must not end the client.
+          }
+        }
+        resolve({ stdout: buffers.stdout, stderr: buffers.stderr })
+      }
+      const take = (chunk: Uint8Array, dest: Buffer): Buffer => {
+        if (settled) {
+          return dest
+        }
+        const remaining = MACHINE_SNAPSHOT_OUTPUT_CAP_BYTES - buffers.total
+        if (remaining <= 0) {
+          finish()
+          return dest
+        }
+        const source = chunk.byteLength > remaining ? chunk.subarray(0, remaining) : chunk
+        buffers.total += source.byteLength
+        const next = Buffer.concat([dest, source]) as Buffer
+        if (chunk.byteLength > remaining) {
+          finish()
+        }
+        return next
+      }
+      try {
+        session.client.exec(MACHINE_SNAPSHOT_COMMAND, { pty: false }, (err, stream) => {
+          if (settled) {
+            stream?.destroy()
+            return
+          }
+          if (sessions.get(sessionId) !== session || err) {
+            finish()
+            return
+          }
+          session.discoveryStream = stream
+          stream.on('data', (data: Buffer | string) => {
+            if (data instanceof Uint8Array) {
+              buffers.stdout = take(data, buffers.stdout)
+            }
+          })
+          if (stream.stderr !== undefined) {
+            stream.stderr.on('data', (data: Buffer | string) => {
+              if (data instanceof Uint8Array) {
+                buffers.stderr = take(data, buffers.stderr)
+              }
+            })
+          }
+          stream.on('close', () => {
+            finish()
+          })
+          stream.on('error', () => {
+            finish()
+          })
+        })
+      } catch {
+        finish()
+      }
+      session.discoveryTimer = setTimeout(() => {
+        finish()
+      }, timeoutMs)
+    })
+
+    session.discoveryInFlight = false
+    if (sessions.get(sessionId) !== session) {
+      return
+    }
+    const run = interpretDiscoveryOutput({
+      stdout: collected.stdout.toString('utf8'),
+      stderr: collected.stderr.toString('utf8')
+    })
+    const previous = await deps.readSnapshot?.(session.profileId)
+    if (sessions.get(sessionId) !== session) {
+      return
+    }
+    const snapshot = applyDiscoveryRun(previous, run, new Date().toISOString())
+    try {
+      await deps.recordSnapshot?.(session.profileId, snapshot)
+    } catch {
+      // Persistence failure still surfaces the in-memory snapshot.
+    }
+    deps.emitTo(session.senderId, 'ssh:snapshot', { profileId: session.profileId, snapshot })
   }
 
   const api: SshApi = {
@@ -797,7 +959,11 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
         attemptStartedAt: isoNow(),
         attemptConnectedAt: undefined,
         attemptFinalized: false,
-        operatorDisconnect: false
+        operatorDisconnect: false,
+        autoDiscoveryStarted: false,
+        discoveryInFlight: false,
+        discoveryStream: undefined,
+        discoveryTimer: undefined
       }
       sessions.set(sessionId, session)
       sessionByProfile.set(parsed.profileId, sessionId)
@@ -1129,6 +1295,18 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
       session.settleOpen?.(canceled)
       session.failHandshake?.(canceled)
       dropSession(sessionId)
+    },
+
+    async refreshDiscovery(profileId, sender) {
+      const sessionId = sessionByProfile.get(profileId.trim())
+      if (sessionId === undefined) {
+        return
+      }
+      const session = sessions.get(sessionId)
+      if (session === undefined || session.senderId !== sender.id || session.stream === undefined) {
+        return
+      }
+      await runDiscovery(sessionId)
     },
 
     hasSession(profileId) {

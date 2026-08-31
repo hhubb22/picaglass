@@ -82,6 +82,12 @@ export function registerSshIpc(api: SshApi): void {
     }
     return api.cancel(profileId, { id: event.sender.id })
   })
+  ipcMain.handle('ssh:refreshDiscovery', (event, profileId: unknown) => {
+    if (typeof profileId !== 'string') {
+      return
+    }
+    return api.refreshDiscovery(profileId, { id: event.sender.id })
+  })
   ipcMain.on('ssh:write', (event, sessionId: unknown, data: unknown) => {
     if (typeof sessionId !== 'string' || !(data instanceof Uint8Array)) {
       return

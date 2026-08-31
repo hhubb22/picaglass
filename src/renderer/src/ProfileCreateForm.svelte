@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { ProfileDraftForm, ProfileFieldErrors } from '../../shared/profile'
+  import { MACHINE_SNAPSHOT_COMMAND } from '../../shared/machine-snapshot'
 
   let {
     draft = $bindable(),
@@ -125,10 +126,15 @@
     <input type="checkbox" bind:checked={draft.automaticDiscovery} disabled={busy} />
     Automatic discovery
   </label>
-  <p class="hint">
-    When enabled, Picaglass runs a fixed command after a successful connection to collect hostname,
-    kernel name, kernel release, and architecture.
-  </p>
+  <details class="disclosure">
+    <summary>What automatic discovery runs</summary>
+    <p class="hint">
+      When enabled, Picaglass runs a remote command automatically after each successful connection.
+      It collects hostname, kernel name, kernel release, and architecture. The command is fixed and
+      does not include any Connection Profile or user text.
+    </p>
+    <pre class="command">{MACHINE_SNAPSHOT_COMMAND}</pre>
+  </details>
 
   <div class="actions">
     <button type="submit" disabled={busy}>Save</button>
@@ -193,6 +199,21 @@
 
   .hint {
     color: #555;
+    font-size: 0.8rem;
+  }
+
+  .disclosure {
+    display: grid;
+    gap: 8px;
+    font-size: 0.875rem;
+  }
+
+  .command {
+    margin: 0;
+    padding: 8px 10px;
+    border: 1px solid #d0d0d0;
+    overflow-x: auto;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     font-size: 0.8rem;
   }
 

@@ -22,6 +22,20 @@ export type TestPty = TestSize & {
   term: string
 }
 
+export type TestExecRequest = {
+  command: string
+  ptyRequested: boolean
+}
+
+export type TestExecResponse = {
+  stdout?: string | Buffer
+  stderr?: string | Buffer
+  exitCode?: number
+  delayMs?: number
+  hang?: boolean
+  reject?: boolean
+}
+
 export type TestServer = {
   port: number
   shellCount: () => number
@@ -30,6 +44,7 @@ export type TestServer = {
   windowChanges: () => TestSize[]
   receivedBytes: () => Buffer
   liveConnections: () => number
+  execs: () => TestExecRequest[]
   closeLastShell: () => void
   close: () => Promise<void>
 }
@@ -62,9 +77,35 @@ function ptyFromInfo(info: { cols: number; rows: number; term?: unknown }): Test
   }
 }
 
+function replyExec(
+  stream: {
+    write: (data: Buffer) => void
+    stderr: { write: (data: Buffer) => void }
+    exit: (code: number) => void
+    close: () => void
+  },
+  response: TestExecResponse
+): void {
+  const stdout = response.stdout
+  if (stdout !== undefined) {
+    stream.write(typeof stdout === 'string' ? Buffer.from(stdout) : stdout)
+  }
+  const stderr = response.stderr
+  if (stderr !== undefined) {
+    stream.stderr.write(typeof stderr === 'string' ? Buffer.from(stderr) : stderr)
+  }
+  stream.exit(response.exitCode ?? 0)
+  stream.close()
+}
+
 export async function startServer(
   hostKeyPem: string,
-  opts?: { stallAuth?: boolean; stallShell?: boolean; port?: number }
+  opts?: {
+    stallAuth?: boolean
+    stallShell?: boolean
+    port?: number
+    exec?: (command: string) => TestExecResponse
+  }
 ): Promise<TestServer> {
   let shells = 0
   let pty: TestPty | undefined
@@ -72,6 +113,7 @@ export async function startServer(
   let live = 0
   const windowChanges: TestSize[] = []
   const received: Buffer[] = []
+  const execs: TestExecRequest[] = []
   const server = new Server({ hostKeys: [hostKeyPem] }, (connection) => {
     live += 1
     connection.on('close', () => {
@@ -105,7 +147,9 @@ export async function startServer(
       }
       connection.on('session', (accept) => {
         const session = accept()
+        let ptyRequested = false
         session.on('pty', (acceptPty, _reject, info) => {
+          ptyRequested = true
           pty = ptyFromInfo(info)
           acceptPty()
         })
@@ -122,6 +166,25 @@ export async function startServer(
             received.push(Buffer.from(data))
             stream.write(data)
           })
+        })
+        session.on('exec', (acceptExec, rejectExec, info) => {
+          execs.push({ command: info.command, ptyRequested })
+          const response = opts?.exec?.(info.command) ?? { stdout: '', exitCode: 0 }
+          if (response.reject === true) {
+            rejectExec()
+            return
+          }
+          const stream = acceptExec()
+          if (response.hang === true) {
+            return
+          }
+          if (response.delayMs !== undefined && response.delayMs > 0) {
+            setTimeout(() => {
+              replyExec(stream, response)
+            }, response.delayMs)
+            return
+          }
+          replyExec(stream, response)
         })
       })
     })
@@ -149,6 +212,7 @@ export async function startServer(
     windowChanges: () => [...windowChanges],
     receivedBytes: () => Buffer.concat(received),
     liveConnections: () => live,
+    execs: () => [...execs],
     closeLastShell: () => {
       lastShell?.close()
     },

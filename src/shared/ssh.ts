@@ -1,3 +1,4 @@
+import type { MachineSnapshot } from './machine-snapshot'
 import type {
   CreateProfileInput,
   CreateProfileResult,
@@ -77,6 +78,11 @@ export type SshStatusEvent = {
   message?: string
 }
 
+export type MachineSnapshotEvent = {
+  profileId: string
+  snapshot: MachineSnapshot
+}
+
 export type SshKeyPick = { keyRef: string; label: string }
 
 export type RendererApi = {
@@ -91,10 +97,12 @@ export type RendererApi = {
     resize: (sessionId: string, cols: number, rows: number) => void
     disconnect: (sessionId: string) => Promise<void>
     cancel: (profileId: string) => Promise<void>
+    refreshDiscovery: (profileId: string) => Promise<void>
     onData: (
       handler: (sessionId: string, chunk: Uint8Array, profileId: string) => void
     ) => () => void
     onStatus: (handler: (event: SshStatusEvent) => void) => () => void
+    onSnapshot: (handler: (event: MachineSnapshotEvent) => void) => () => void
   }
   profiles: {
     load: () => Promise<ProfileWorkspace>

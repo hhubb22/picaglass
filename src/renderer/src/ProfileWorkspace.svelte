@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { RendererProfile } from '../../shared/profile'
+  import { machineSnapshotCard } from '../../shared/machine-snapshot'
   import type { WorkspaceTab } from '../../shared/profile-workspace-ui'
   import {
     SESSION_STATE_LABEL,
@@ -31,7 +32,8 @@
     onEdit,
     onDelete,
     onForgetHostKey,
-    onDismissFailure
+    onDismissFailure,
+    onRefreshSnapshot
   }: {
     profile: RendererProfile
     tab: WorkspaceTab
@@ -48,6 +50,7 @@
     onDelete: () => void
     onForgetHostKey: () => void
     onDismissFailure: () => void
+    onRefreshSnapshot: () => void
   } = $props()
 
   const authSummary = $derived(
@@ -60,6 +63,7 @@
   const canDisconnect = $derived(session.state === 'connected')
   const trustCard = $derived(hostTrustCard(hostTrust))
   const lastAttempt = $derived(profile.lastAttempt)
+  const snapshotCard = $derived(machineSnapshotCard(profile.snapshot))
 
   function formatAttemptTime(iso: string): string {
     return new Date(iso).toLocaleString()
@@ -74,6 +78,14 @@
     }
     const value = attempt[field]
     return value === undefined ? '—' : formatAttemptTime(value)
+  }
+
+  function formatSnapshotTime(iso: string): string {
+    const date = new Date(iso)
+    if (Number.isNaN(date.getTime())) {
+      return iso
+    }
+    return date.toLocaleString()
   }
 </script>
 
@@ -141,6 +153,65 @@
       {/if}
       {#if canDisconnect}
         <button type="button" onclick={onDisconnect}>Disconnect</button>
+      {/if}
+    </article>
+    <article class="card">
+      <h2>Machine Snapshot</h2>
+      {#if snapshotCard.empty}
+        <p>No Machine Snapshot yet.</p>
+      {:else if snapshotCard.unavailable && !snapshotCard.hasFacts}
+        <p>Discovery unavailable</p>
+        {#if snapshotCard.failedRefreshAt}
+          <p class="meta">Refresh failed {formatSnapshotTime(snapshotCard.failedRefreshAt)}</p>
+        {/if}
+      {:else}
+        {#if snapshotCard.lastObserved}
+          <p class="meta">Last observed</p>
+        {/if}
+        {#if snapshotCard.unavailable}
+          <p>Discovery unavailable</p>
+        {/if}
+        <dl>
+          {#if snapshotCard.hostname}
+            <div>
+              <dt>Hostname</dt>
+              <dd>{snapshotCard.hostname}</dd>
+            </div>
+          {/if}
+          {#if snapshotCard.kernelName}
+            <div>
+              <dt>Kernel name</dt>
+              <dd>{snapshotCard.kernelName}</dd>
+            </div>
+          {/if}
+          {#if snapshotCard.kernelRelease}
+            <div>
+              <dt>Kernel release</dt>
+              <dd>{snapshotCard.kernelRelease}</dd>
+            </div>
+          {/if}
+          {#if snapshotCard.architecture}
+            <div>
+              <dt>Architecture</dt>
+              <dd>{snapshotCard.architecture}</dd>
+            </div>
+          {/if}
+        </dl>
+        {#if snapshotCard.observedAt}
+          <p class="meta">
+            {#if snapshotCard.lastObserved}
+              {formatSnapshotTime(snapshotCard.observedAt)}
+            {:else}
+              Observed {formatSnapshotTime(snapshotCard.observedAt)}
+            {/if}
+          </p>
+        {/if}
+        {#if snapshotCard.failedRefreshAt}
+          <p class="meta">Refresh failed {formatSnapshotTime(snapshotCard.failedRefreshAt)}</p>
+        {/if}
+      {/if}
+      {#if canDisconnect}
+        <button type="button" onclick={onRefreshSnapshot}>Refresh</button>
       {/if}
     </article>
     <article class="card">
@@ -342,6 +413,12 @@
 
   .failure-banner p {
     color: #b00020;
+  }
+
+  .meta {
+    margin: 0;
+    font-size: 0.8rem;
+    color: #555;
   }
 
   .terminal-pane {

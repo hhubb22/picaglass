@@ -731,6 +731,17 @@
         void refreshSelectedTrust()
       }
     })
+    const stopSnapshot = window.api.ssh.onSnapshot((event) => {
+      if (!workspace.profiles.some((profile) => profile.id === event.profileId)) {
+        return
+      }
+      workspace = {
+        ...workspace,
+        profiles: workspace.profiles.map((profile) =>
+          profile.id === event.profileId ? { ...profile, snapshot: event.snapshot } : profile
+        )
+      }
+    })
     const stopClose = window.api.workspace.onCloseRequested(() => {
       if (dirtyForm) {
         discard = { kind: 'close' }
@@ -741,6 +752,7 @@
     return () => {
       stopData()
       stopStatus()
+      stopSnapshot()
       stopClose()
       registry.dispose()
     }
@@ -816,6 +828,7 @@
             forgetConfirm = true
           }}
           onDismissFailure={() => dismissFailure(selected.id)}
+          onRefreshSnapshot={() => void window.api.ssh.refreshDiscovery(selected.id)}
         />
       </div>
     {/if}
