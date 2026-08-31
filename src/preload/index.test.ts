@@ -36,7 +36,7 @@ describe('preload bridge', () => {
     if (typeof api !== 'object' || api === null) {
       throw new Error('expected an api object')
     }
-    expect(Object.keys(api).sort()).toEqual(['diagnostics', 'profiles', 'ssh', 'workspace'])
+    expect(Object.keys(api).sort()).toEqual(['diagnostics', 'mcp', 'profiles', 'ssh', 'workspace'])
     const ssh = (api as { ssh: unknown }).ssh
     if (typeof ssh !== 'object' || ssh === null) {
       throw new Error('expected an ssh object')
@@ -63,6 +63,11 @@ describe('preload bridge', () => {
       throw new Error('expected a diagnostics object')
     }
     expect(Object.keys(diagnostics).sort()).toEqual(['runDeviceFacts'])
+    const mcp = (api as { mcp: unknown }).mcp
+    if (typeof mcp !== 'object' || mcp === null) {
+      throw new Error('expected an mcp object')
+    }
+    expect(Object.keys(mcp).sort()).toEqual(['getConfig'])
     const profiles = (api as { profiles: unknown }).profiles
     if (typeof profiles !== 'object' || profiles === null) {
       throw new Error('expected a profiles object')

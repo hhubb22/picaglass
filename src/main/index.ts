@@ -7,6 +7,8 @@ import { createSshApi } from './ssh/create-ssh-api'
 import { registerSshIpc } from './ssh/register-ssh-ipc'
 import { createDiagnosticsApi } from './diagnostics/create-diagnostics-api'
 import { registerDiagnosticsIpc } from './diagnostics/register-diagnostics-ipc'
+import { createMcpServer, type McpServerHandle } from './mcp/create-mcp-server'
+import { registerMcpIpc } from './mcp/register-mcp-ipc'
 import { bindWorkspaceClose, type ClosableWorkspaceWindow } from './profiles/bind-workspace-close'
 import { createProfileApi } from './profiles/create-profile-api'
 import { registerProfileIpc } from './profiles/register-profile-ipc'
@@ -80,7 +82,7 @@ function createWindow(sshApi: ReturnType<typeof createSshApi>): void {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   electronApp.setAppUserModelId('com.picaglass')
 
   app.on('browser-window-created', (_, window) => {
@@ -118,15 +120,33 @@ app.whenReady().then(() => {
       sshApi.dropProfileSession(profileId)
     }
   })
-  registerSshIpc(sshApi)
-  registerDiagnosticsIpc(
-    createDiagnosticsApi({
+  const diagnosticsApi = createDiagnosticsApi({
+    hasLiveSession: (profileId) => sshApi.hasLiveSession(profileId),
+    exec: (profileId, command) => sshApi.execOnSession(profileId, command)
+  })
+  let mcp: McpServerHandle | undefined
+  try {
+    mcp = await createMcpServer({
+      userDataPath: app.getPath('userData'),
+      listProfiles: async () => {
+        const workspace = await profileApi.load()
+        return workspace.profiles.map((profile) => ({ id: profile.id, label: profile.label }))
+      },
       hasLiveSession: (profileId) => sshApi.hasLiveSession(profileId),
-      exec: (profileId, command) => sshApi.execOnSession(profileId, command)
+      runDeviceFacts: (profileId) => diagnosticsApi.runDeviceFacts(profileId)
     })
-  )
+  } catch (err) {
+    console.error('Failed to start the Agent Interface', err)
+  }
+  registerSshIpc(sshApi)
+  registerDiagnosticsIpc(diagnosticsApi)
+  registerMcpIpc(() => mcp?.snippets)
   registerProfileIpc(profileApi)
   registerWorkspaceCloseIpc()
+
+  app.on('before-quit', () => {
+    void mcp?.stop()
+  })
 
   createWindow(sshApi)
 

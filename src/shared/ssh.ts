@@ -1,4 +1,5 @@
 import type { MachineSnapshot } from './machine-snapshot'
+import type { McpConfigResult } from './mcp-config'
 import type { DeviceFactsRun } from './picos/device-facts'
 import type {
   CreateProfileInput,
@@ -109,6 +110,9 @@ export type RendererApi = {
   }
   diagnostics: {
     runDeviceFacts: (profileId: string) => Promise<DeviceFactsRun>
+  }
+  mcp: {
+    getConfig: () => Promise<McpConfigResult>
   }
   profiles: {
     load: () => Promise<ProfileWorkspace>
