@@ -11,6 +11,7 @@ import {
   emitsHaveChunk,
   filesContain,
   generateHostKey,
+  isRecord,
   startServer,
   waitForServerBytes
 } from './ssh-test-fixture'
@@ -195,6 +196,35 @@ describe('connectFromProfile', () => {
     await openFromProfile(ssh, created.workspace.selectedProfileId, { id: 1 }, 'secret-password')
 
     expect(filesContain(userDataPath, 'secret-password')).toBe(false)
+  })
+
+  it('tags session data with the Connection Profile identity', async () => {
+    userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-profile-ssh-'))
+    const hostKey = generateHostKey(userDataPath)
+    server = await startServer(hostKey.pem)
+    const emits: CapturedEmit[] = []
+    const { profiles, ssh } = await wired(emits)
+    const created = await profiles.create({
+      host: '127.0.0.1',
+      port: server.port,
+      username: 'tester',
+      auth: { method: 'password' }
+    })
+    if (!created.ok || created.workspace.selectedProfileId === null) {
+      throw new Error('expected a saved profile')
+    }
+    const profileId = created.workspace.selectedProfileId
+    const sessionId = await openFromProfile(ssh, profileId, { id: 1 }, 'secret-password')
+
+    const data = emits.find((event) => event.channel === 'ssh:data')
+    expect(data?.payload).toMatchObject({ sessionId, profileId })
+    const connected = emits.find(
+      (event) =>
+        event.channel === 'ssh:status' &&
+        isRecord(event.payload) &&
+        event.payload.type === 'connected'
+    )
+    expect(connected?.payload).toMatchObject({ sessionId, profileId, type: 'connected' })
   })
 
   async function saveKeyProfile(

@@ -50,6 +50,7 @@ export type SshHostKeyAction = 'trust-always' | 'abort'
 
 export type SshStatusEvent = {
   sessionId: string
+  profileId?: string
   type: 'connected' | 'closed' | 'error'
   code?: number
   message?: string
@@ -67,7 +68,9 @@ export type RendererApi = {
     resize: (sessionId: string, cols: number, rows: number) => void
     disconnect: (sessionId: string) => Promise<void>
     cancel: (profileId: string) => Promise<void>
-    onData: (handler: (sessionId: string, chunk: Uint8Array) => void) => () => void
+    onData: (
+      handler: (sessionId: string, chunk: Uint8Array, profileId: string) => void
+    ) => () => void
     onStatus: (handler: (event: SshStatusEvent) => void) => () => void
   }
   profiles: {

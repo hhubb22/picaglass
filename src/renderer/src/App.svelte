@@ -417,16 +417,19 @@
       workspace = loaded
       pane = loaded.selectedProfileId === null ? 'empty' : 'profile'
     })
-    const stopData = window.api.ssh.onData((sessionId, chunk) => {
-      const profileId = profileIdForSession(sessionId)
-      if (profileId === undefined) {
+    const stopData = window.api.ssh.onData((sessionId, chunk, profileId) => {
+      const id = profileId.length > 0 ? profileId : profileIdForSession(sessionId)
+      if (id === undefined) {
         return
       }
-      transcripts[profileId] = appendRemote(transcripts[profileId] ?? [], chunk)
-      registry.writeRemote(profileId, chunk)
+      transcripts[id] = appendRemote(transcripts[id] ?? [], chunk)
+      registry.writeRemote(id, chunk)
     })
     const stopStatus = window.api.ssh.onStatus((event) => {
-      const profileId = profileIdForSession(event.sessionId)
+      const profileId =
+        event.profileId !== undefined && event.profileId.length > 0
+          ? event.profileId
+          : profileIdForSession(event.sessionId)
       if (profileId === undefined) {
         return
       }

@@ -27,10 +27,15 @@ const api: RendererApi = {
         }
         const sessionId = payload.sessionId
         const chunk = payload.chunk
-        if (typeof sessionId !== 'string' || !(chunk instanceof Uint8Array)) {
+        const profileId = 'profileId' in payload ? payload.profileId : undefined
+        if (
+          typeof sessionId !== 'string' ||
+          !(chunk instanceof Uint8Array) ||
+          typeof profileId !== 'string'
+        ) {
           return
         }
-        handler(sessionId, chunk)
+        handler(sessionId, chunk, profileId)
       }
       ipcRenderer.on('ssh:data', listener)
       return () => {

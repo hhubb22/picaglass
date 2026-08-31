@@ -351,12 +351,17 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
     if (outcome.type === 'error') {
       deps.emitTo(session.senderId, 'ssh:status', {
         sessionId,
+        profileId: session.profileId,
         type: 'error',
         message: outcome.message
       })
       return
     }
-    deps.emitTo(session.senderId, 'ssh:status', { sessionId, type: 'closed' })
+    deps.emitTo(session.senderId, 'ssh:status', {
+      sessionId,
+      profileId: session.profileId,
+      type: 'closed'
+    })
   }
 
   function openShell(sessionId: string): Promise<SshConnectResult> {
@@ -402,6 +407,7 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
                 }
                 deps.emitTo(session.senderId, 'ssh:data', {
                   sessionId,
+                  profileId: session.profileId,
                   chunk: Uint8Array.from(data)
                 })
               })
@@ -411,6 +417,7 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
               })
               deps.emitTo(session.senderId, 'ssh:status', {
                 sessionId,
+                profileId: session.profileId,
                 type: 'connected'
               })
               finish({ ok: true, sessionId })
