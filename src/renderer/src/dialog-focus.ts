@@ -26,6 +26,7 @@ export function bindDialogFocus(
     }
     const items = [...root.querySelectorAll<HTMLElement>(FOCUSABLE)]
     if (items.length === 0) {
+      event.preventDefault()
       return
     }
     const first = items[0]
@@ -33,12 +34,13 @@ export function bindDialogFocus(
     if (first === undefined || last === undefined) {
       return
     }
-    if (event.shiftKey && document.activeElement === first) {
+    const active = document.activeElement
+    if (event.shiftKey && (active === first || active === root)) {
       event.preventDefault()
       last.focus()
       return
     }
-    if (!event.shiftKey && document.activeElement === last) {
+    if (!event.shiftKey && (active === last || active === root)) {
       event.preventDefault()
       first.focus()
     }

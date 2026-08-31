@@ -97,22 +97,10 @@
 
 <section class="workspace">
   <nav class="tabs" aria-label="Profile workspace">
-    <button
-      type="button"
-      role="tab"
-      aria-selected={tab === 'overview'}
-      class:selected={tab === 'overview'}
-      onclick={() => onTab('overview')}
-    >
+    <button type="button" class:selected={tab === 'overview'} onclick={() => onTab('overview')}>
       Overview
     </button>
-    <button
-      type="button"
-      role="tab"
-      aria-selected={tab === 'terminal'}
-      class:selected={tab === 'terminal'}
-      onclick={() => onTab('terminal')}
-    >
+    <button type="button" class:selected={tab === 'terminal'} onclick={() => onTab('terminal')}>
       Terminal
     </button>
   </nav>
@@ -254,6 +242,26 @@
           {/if}
         </article>
         <article class="card">
+          <h2>Host Trust</h2>
+          <p>{trustCard.statusLabel}</p>
+          {#if trustCard.algorithm !== null && trustCard.fingerprint !== null}
+            <dl>
+              <div>
+                <dt>Algorithm</dt>
+                <dd>{trustCard.algorithm}</dd>
+              </div>
+              <div>
+                <dt>Fingerprint</dt>
+                <dd class="fingerprint">{trustCard.fingerprint}</dd>
+              </div>
+            </dl>
+          {/if}
+          {#if trustCard.canForget}
+            <button type="button" onclick={onForgetHostKey}>{HOST_TRUST_ACTION_LABEL.forget}</button
+            >
+          {/if}
+        </article>
+        <article class="card">
           <h2>Last Attempt</h2>
           {#if lastAttempt === null}
             <p>No Connection Attempt yet.</p>
@@ -276,26 +284,6 @@
                 <dd>{attemptValue(lastAttempt, 'outcome')}</dd>
               </div>
             </dl>
-          {/if}
-        </article>
-        <article class="card">
-          <h2>Host Trust</h2>
-          <p>{trustCard.statusLabel}</p>
-          {#if trustCard.algorithm !== null && trustCard.fingerprint !== null}
-            <dl>
-              <div>
-                <dt>Algorithm</dt>
-                <dd>{trustCard.algorithm}</dd>
-              </div>
-              <div>
-                <dt>Fingerprint</dt>
-                <dd class="fingerprint">{trustCard.fingerprint}</dd>
-              </div>
-            </dl>
-          {/if}
-          {#if trustCard.canForget}
-            <button type="button" onclick={onForgetHostKey}>{HOST_TRUST_ACTION_LABEL.forget}</button
-            >
           {/if}
         </article>
       </div>

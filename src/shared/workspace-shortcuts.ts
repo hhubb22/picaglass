@@ -4,7 +4,6 @@ export type WorkspaceShortcut =
   'search' | 'toggle-sidebar' | 'overview' | 'terminal' | 'previous-profile' | 'next-profile'
 
 export type ShortcutEvent = {
-  key: string
   code: string
   metaKey: boolean
   ctrlKey: boolean

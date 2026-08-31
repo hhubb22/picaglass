@@ -202,7 +202,19 @@
   }
 
   function setSession(profileId: string, next: ProfileSessionUi): void {
+    const previous = sessionOf(profileId)
     sessions[profileId] = next
+    const label = workspace.profiles.find((profile) => profile.id === profileId)?.label ?? ''
+    const text = workspaceLiveAnnouncement({
+      label,
+      previousState: previous.state,
+      nextState: next.state,
+      becameUnseenFailure: next.unseenFailure && !previous.unseenFailure,
+      failureOutcome: next.lastOutcome
+    })
+    if (text !== null) {
+      liveAnnouncement = text
+    }
   }
 
   function isOnScreen(profileId: string): boolean {
@@ -219,20 +231,7 @@
     next: ProfileSessionUi,
     detail: string | null = next.error
   ): void {
-    const previous = sessionOf(profileId)
-    const applied = withAttemptFailure(next, isOnScreen(profileId), detail)
-    setSession(profileId, applied)
-    const label = workspace.profiles.find((profile) => profile.id === profileId)?.label ?? ''
-    const text = workspaceLiveAnnouncement({
-      label,
-      previousState: previous.state,
-      nextState: applied.state,
-      becameUnseenFailure: applied.unseenFailure && !previous.unseenFailure,
-      failureOutcome: applied.lastOutcome
-    })
-    if (text !== null) {
-      liveAnnouncement = text
-    }
+    setSession(profileId, withAttemptFailure(next, isOnScreen(profileId), detail))
   }
 
   function connectFailureDetail(result: SshConnectResult, next: ProfileSessionUi): string | null {
@@ -823,7 +822,6 @@
       return
     }
     const shortcutEvent: ShortcutEvent = {
-      key: event.key,
       code: event.code,
       metaKey: event.metaKey,
       ctrlKey: event.ctrlKey,
@@ -835,21 +833,27 @@
     if (action === null) {
       return
     }
-    event.preventDefault()
-    event.stopPropagation()
     if (action === 'search') {
+      event.preventDefault()
+      event.stopPropagation()
       void revealAndFocusSearch()
       return
     }
     if (action === 'toggle-sidebar') {
+      event.preventDefault()
+      event.stopPropagation()
       void toggleSidebar()
       return
     }
     if (action === 'overview' && pane === 'profile') {
+      event.preventDefault()
+      event.stopPropagation()
       chooseTab('overview')
       return
     }
     if (action === 'terminal' && pane === 'profile') {
+      event.preventDefault()
+      event.stopPropagation()
       chooseTab('terminal')
       return
     }
@@ -859,9 +863,12 @@
         workspace.selectedProfileId,
         action === 'previous-profile' ? 'previous' : 'next'
       )
-      if (nextId !== null) {
-        void selectProfile(nextId)
+      if (nextId === null) {
+        return
       }
+      event.preventDefault()
+      event.stopPropagation()
+      void selectProfile(nextId)
     }
   }
 

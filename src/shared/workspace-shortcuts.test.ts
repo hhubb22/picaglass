@@ -7,7 +7,6 @@ import {
 
 function event(overrides: Partial<ShortcutEvent> & Pick<ShortcutEvent, 'code'>): ShortcutEvent {
   return {
-    key: '',
     metaKey: false,
     ctrlKey: false,
     shiftKey: false,
@@ -63,16 +62,10 @@ describe('matchWorkspaceShortcut', () => {
 
   it('matches the physical key when Shift changes event.key on Windows/Linux', () => {
     expect(
-      matchWorkspaceShortcut(
-        event({ code: 'Digit1', key: '!', ctrlKey: true, shiftKey: true }),
-        'linux'
-      )
+      matchWorkspaceShortcut(event({ code: 'Digit1', ctrlKey: true, shiftKey: true }), 'linux')
     ).toBe('overview')
     expect(
-      matchWorkspaceShortcut(
-        event({ code: 'BracketLeft', key: '{', ctrlKey: true, shiftKey: true }),
-        'linux'
-      )
+      matchWorkspaceShortcut(event({ code: 'BracketLeft', ctrlKey: true, shiftKey: true }), 'linux')
     ).toBe('previous-profile')
   })
 
