@@ -53,13 +53,7 @@ describe('createSshApi session', () => {
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
     const emits: CapturedEmit[] = []
-    api = testApi(
-      userDataPath,
-      {
-        showMessageBox: async () => ({ response: 0 })
-      },
-      emits
-    )
+    api = testApi(userDataPath, undefined, emits)
 
     const unknown = await api.connect(connectRequest(server.port), { id: 1 })
     if (unknown.ok || unknown.reason !== 'host-unknown') {
@@ -102,9 +96,7 @@ describe('createSshApi session', () => {
       },
       onStatus: () => undefined
     })
-    api = testApiWithInbox(userDataPath, inbox, {
-      showMessageBox: async () => ({ response: 0 })
-    })
+    api = testApiWithInbox(userDataPath, inbox)
 
     const unknown = await api.connect(connectRequest(server.port), { id: 1 })
     if (unknown.ok || unknown.reason !== 'host-unknown') {
@@ -145,9 +137,7 @@ describe('createSshApi session', () => {
       },
       onStatus: () => undefined
     })
-    api = testApiWithInbox(userDataPath, inbox, {
-      showMessageBox: async () => ({ response: 0 })
-    })
+    api = testApiWithInbox(userDataPath, inbox)
 
     const unknown = await api.connect(connectRequest(server.port), { id: 1 })
     if (unknown.ok || unknown.reason !== 'host-unknown') {
@@ -173,13 +163,7 @@ describe('createSshApi session', () => {
     userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
-    let messageBoxes = 0
-    api = testApi(userDataPath, {
-      showMessageBox: async () => {
-        messageBoxes += 1
-        return { response: 0 }
-      }
-    })
+    api = testApi(userDataPath)
 
     const unknown = await api.connect(connectRequest(server.port), { id: 1 })
     if (unknown.ok || unknown.reason !== 'host-unknown') {
@@ -190,7 +174,6 @@ describe('createSshApi session', () => {
     const second = api.confirmHostKey(unknown.sessionId, 'trust-always', { id: 1 })
     const results = await Promise.all([first, second])
 
-    expect(messageBoxes).toBe(1)
     expect(server.shellCount()).toBe(1)
     expect(results.filter((result) => result.ok)).toHaveLength(1)
     expect(results.filter((result) => !result.ok)).toHaveLength(1)
@@ -200,7 +183,7 @@ describe('createSshApi session', () => {
     userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
-    api = testApi(userDataPath, { showMessageBox: async () => ({ response: 0 }) })
+    api = testApi(userDataPath)
 
     const unknown = await api.connect(connectRequest(server.port), { id: 1 })
     if (unknown.ok || unknown.reason !== 'host-unknown') {
@@ -263,7 +246,7 @@ describe('createSshApi session', () => {
         return Reflect.apply(originalShell, this, args)
       }
     })
-    api = testApi(userDataPath, { showMessageBox: async () => ({ response: 0 }) }, emits, {
+    api = testApi(userDataPath, undefined, emits, {
       authTimeoutMs: 1500
     })
 
@@ -307,7 +290,7 @@ describe('createSshApi session', () => {
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
     const emits: CapturedEmit[] = []
-    api = testApi(userDataPath, { showMessageBox: async () => ({ response: 0 }) }, emits)
+    api = testApi(userDataPath, undefined, emits)
 
     const unknown = await api.connect(connectRequest(server.port), { id: 1 })
     if (unknown.ok || unknown.reason !== 'host-unknown') {
@@ -342,7 +325,7 @@ describe('createSshApi session', () => {
     server = await startServer(hostKey.pem)
     proxy = await tcpProxy(server.port)
     const emits: CapturedEmit[] = []
-    api = testApi(userDataPath, { showMessageBox: async () => ({ response: 0 }) }, emits)
+    api = testApi(userDataPath, undefined, emits)
 
     const unknown = await api.connect(connectRequest(proxy.port), { id: 1 })
     if (unknown.ok || unknown.reason !== 'host-unknown') {
@@ -390,8 +373,7 @@ describe('createSshApi session', () => {
     api = testApi(
       userDataPath,
       {
-        showOpenDialog: async () => ({ canceled: false, filePaths: [badKeyPath] }),
-        showMessageBox: async () => ({ response: 0 })
+        showOpenDialog: async () => ({ canceled: false, filePaths: [badKeyPath] })
       },
       emits
     )
@@ -440,8 +422,7 @@ describe('createSshApi session', () => {
     api = testApi(
       userDataPath,
       {
-        showOpenDialog: async () => ({ canceled: false, filePaths: [clientKeyPath] }),
-        showMessageBox: async () => ({ response: 0 })
+        showOpenDialog: async () => ({ canceled: false, filePaths: [clientKeyPath] })
       },
       emits
     )
@@ -495,14 +476,7 @@ describe('createSshApi session', () => {
       },
       onStatus: () => undefined
     })
-    api = testApiWithInbox(
-      userDataPath,
-      inbox,
-      {
-        showMessageBox: async () => ({ response: 0 })
-      },
-      { forwardStatus: false }
-    )
+    api = testApiWithInbox(userDataPath, inbox, undefined, { forwardStatus: false })
 
     const unknown = await api.connect(connectRequest(server.port), { id: 1 })
     if (unknown.ok || unknown.reason !== 'host-unknown') {
@@ -555,7 +529,7 @@ describe('createSshApi session', () => {
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
     const originalShell = Client.prototype.shell
-    api = testApi(userDataPath, { showMessageBox: async () => ({ response: 0 }) })
+    api = testApi(userDataPath)
 
     const unknown = await api.connect(connectRequest(server.port), { id: 1 })
     if (unknown.ok || unknown.reason !== 'host-unknown') {
@@ -598,7 +572,7 @@ describe('createSshApi session', () => {
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
     const originalShell = Client.prototype.shell
-    api = testApi(userDataPath, { showMessageBox: async () => ({ response: 0 }) })
+    api = testApi(userDataPath)
 
     const unknown = await api.connect(connectRequest(server.port), { id: 1 })
     if (unknown.ok || unknown.reason !== 'host-unknown') {
@@ -636,7 +610,7 @@ describe('createSshApi session', () => {
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
     const originalConnect = Client.prototype.connect
-    api = testApi(userDataPath, { showMessageBox: async () => ({ response: 0 }) })
+    api = testApi(userDataPath)
 
     const unknown = await api.connect(connectRequest(server.port), { id: 1 })
     if (unknown.ok || unknown.reason !== 'host-unknown') {

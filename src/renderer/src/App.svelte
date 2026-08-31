@@ -33,6 +33,16 @@
     submitSecret,
     type ProfileSessionUi
   } from '../../shared/ssh-session-ui'
+  import type { HostTrustState, SshHostKeyAction } from '../../shared/ssh'
+  import {
+    HOST_TRUST_ACTION_LABEL,
+    changedHostPrompt,
+    forgetConfirmCopy,
+    formatTrustDestination,
+    replaceConfirmCopy,
+    requestReplaceConfirm,
+    unknownHostPrompt
+  } from '../../shared/host-trust-ui'
   import {
     appendRemote,
     beginAttempt,
@@ -74,6 +84,9 @@
   let deferredTerminal = $state<Record<string, boolean>>({})
   let transcripts = $state<Record<string, TranscriptEntry[]>>({})
   let terminalIds = $state<string[]>([])
+  let hostTrust = $state<HostTrustState>({ status: 'not-remembered' })
+  let replaceConfirm = $state(false)
+  let forgetConfirm = $state(false)
 
   const selected = $derived(
     workspace.profiles.find((profile) => profile.id === workspace.selectedProfileId) ?? null
@@ -188,6 +201,18 @@
     return undefined
   }
 
+  async function refreshHostTrust(host: string, port: number): Promise<void> {
+    hostTrust = await window.api.ssh.hostTrust(host, port)
+  }
+
+  async function refreshSelectedTrust(): Promise<void> {
+    if (selected === null) {
+      hostTrust = { status: 'not-remembered' }
+      return
+    }
+    await refreshHostTrust(selected.host, selected.port)
+  }
+
   function beginCreate(): void {
     if (pane === 'create' && dirtyCreation) {
       return
@@ -243,6 +268,10 @@
         const tab = tabWhenSelectingProfile(tabs[profileId], deferredTerminal[profileId] === true)
         tabs[profileId] = tab
         deferredTerminal[profileId] = false
+        const profile = workspace.profiles.find((item) => item.id === profileId)
+        if (profile !== undefined) {
+          await refreshHostTrust(profile.host, profile.port)
+        }
         if (tab === 'terminal' && sessions[profileId]?.state === 'connected') {
           ensureTerminalId(profileId)
           await tick()
@@ -326,6 +355,7 @@
     })
     const next = applyConnectResult(sessionOf(profileId), result)
     setSession(profileId, next)
+    await refreshSelectedTrust()
     if (next.sessionId !== null) {
       registry.setWritable(profileId, next.sessionId)
     }
@@ -345,14 +375,16 @@
     deferredTerminal[profileId] = true
   }
 
-  async function trustHost(profileId: string): Promise<void> {
+  async function decideHost(profileId: string, action: SshHostKeyAction): Promise<void> {
     const pending = sessionOf(profileId).pendingHostKey
     if (pending === null) {
       return
     }
-    const result = await window.api.ssh.confirmHostKey(pending.sessionId, 'trust-always')
+    replaceConfirm = false
+    const result = await window.api.ssh.confirmHostKey(pending.sessionId, action)
     const next = applyConnectResult({ ...sessionOf(profileId), state: 'connecting' }, result)
     setSession(profileId, next)
+    await refreshSelectedTrust()
     if (next.sessionId !== null) {
       registry.setWritable(profileId, next.sessionId)
       const origin = {
@@ -376,8 +408,27 @@
     if (pending === null) {
       return
     }
+    replaceConfirm = false
     const result = await window.api.ssh.confirmHostKey(pending.sessionId, 'abort')
     setSession(profileId, applyConnectResult(sessionOf(profileId), result))
+    await refreshSelectedTrust()
+  }
+
+  function requestReplace(profileId: string): void {
+    const pending = sessionOf(profileId).pendingHostKey
+    if (pending === null || pending.kind !== 'changed') {
+      return
+    }
+    replaceConfirm = true
+  }
+
+  async function confirmForget(): Promise<void> {
+    if (selected === null) {
+      return
+    }
+    forgetConfirm = false
+    await window.api.ssh.forgetHostKey(selected.host, selected.port)
+    await refreshHostTrust(selected.host, selected.port)
   }
 
   async function disconnectProfile(profileId: string): Promise<void> {
@@ -392,6 +443,7 @@
     if (sessionOf(profileId).state === 'disconnecting') {
       setSession(profileId, applySessionStatus(sessionOf(profileId), { sessionId, type: 'closed' }))
     }
+    await refreshSelectedTrust()
   }
 
   function clearProfileTerminal(profileId: string): void {
@@ -504,6 +556,12 @@
         workspace = result.workspace
         resetDraft()
         pane = 'profile'
+        const created = result.workspace.profiles.find(
+          (profile) => profile.id === result.workspace.selectedProfileId
+        )
+        if (created !== undefined) {
+          await refreshHostTrust(created.host, created.port)
+        }
         return
       }
       workspace = result.workspace
@@ -565,9 +623,13 @@
   }
 
   onMount(() => {
-    void window.api.profiles.load().then((loaded) => {
+    void window.api.profiles.load().then(async (loaded) => {
       workspace = loaded
       pane = loaded.selectedProfileId === null ? 'empty' : 'profile'
+      const profile = loaded.profiles.find((item) => item.id === loaded.selectedProfileId)
+      if (profile !== undefined) {
+        await refreshHostTrust(profile.host, profile.port)
+      }
     })
     const stopData = window.api.ssh.onData((sessionId, chunk, profileId) => {
       const id = profileId.length > 0 ? profileId : profileIdForSession(sessionId)
@@ -601,6 +663,7 @@
         if (ended !== undefined && ended.source === 'local' && ended.kind === 'ended') {
           registry.writeLocal(profileId, ended.message)
         }
+        void refreshSelectedTrust()
       }
     })
     const stopClose = window.api.workspace.onCloseRequested(() => {
@@ -677,12 +740,16 @@
           transcript={selectedTranscript}
           {terminalIds}
           {registry}
+          {hostTrust}
           onTab={chooseTab}
           onConnect={() => void requestConnect(selected.id)}
           onDisconnect={() => void disconnectProfile(selected.id)}
           onClearTerminal={() => clearProfileTerminal(selected.id)}
           onEdit={beginEdit}
           onDelete={requestDelete}
+          onForgetHostKey={() => {
+            forgetConfirm = true
+          }}
         />
       </div>
     {/if}
@@ -701,16 +768,76 @@
   />
 {/if}
 
-{#if selected !== null && selectedSession.pendingHostKey !== null}
+{#if selected !== null && selectedSession.pendingHostKey !== null && selectedSession.pendingHostKey.kind === 'unknown'}
+  {@const prompt = unknownHostPrompt(
+    formatTrustDestination(selected.host, selected.port),
+    selectedSession.pendingHostKey
+  )}
   <AppDialog
     title="Unknown host"
-    confirmLabel="Trust"
-    onConfirm={() => void trustHost(selected.id)}
+    confirmLabel={HOST_TRUST_ACTION_LABEL.trustAlways}
+    extraLabel={HOST_TRUST_ACTION_LABEL.trustOnce}
+    onConfirm={() => void decideHost(selected.id, 'trust-always')}
+    onExtra={() => void decideHost(selected.id, 'trust-once')}
     onCancel={() => void abortHost(selected.id)}
   >
+    <p>Destination {prompt.destination}</p>
+    <p>Algorithm {prompt.algorithm}</p>
     <p>Fingerprint</p>
-    <p class="fingerprint">{selectedSession.pendingHostKey.fingerprint}</p>
-    <p>Algorithm {selectedSession.pendingHostKey.algorithm}</p>
+    <p class="fingerprint">{prompt.fingerprint}</p>
+  </AppDialog>
+{/if}
+
+{#if selected !== null && selectedSession.pendingHostKey !== null && selectedSession.pendingHostKey.kind === 'changed' && !replaceConfirm}
+  {@const prompt = changedHostPrompt(
+    formatTrustDestination(selected.host, selected.port),
+    selectedSession.pendingHostKey
+  )}
+  <AppDialog
+    title="Host key changed"
+    confirmLabel={HOST_TRUST_ACTION_LABEL.replace}
+    onConfirm={() => requestReplace(selected.id)}
+    onCancel={() => void abortHost(selected.id)}
+  >
+    <p>Destination {prompt.destination}</p>
+    <p>Remembered algorithm {prompt.previousAlgorithm}</p>
+    <p>Remembered fingerprint</p>
+    <p class="fingerprint">{prompt.previousFingerprint}</p>
+    <p>New algorithm {prompt.algorithm}</p>
+    <p>New fingerprint</p>
+    <p class="fingerprint">{prompt.fingerprint}</p>
+  </AppDialog>
+{/if}
+
+{#if selected !== null && selectedSession.pendingHostKey !== null && selectedSession.pendingHostKey.kind === 'changed' && replaceConfirm}
+  {@const prompt = requestReplaceConfirm(
+    changedHostPrompt(
+      formatTrustDestination(selected.host, selected.port),
+      selectedSession.pendingHostKey
+    )
+  )}
+  <AppDialog
+    title="Replace trusted host key?"
+    confirmLabel={HOST_TRUST_ACTION_LABEL.replace}
+    onConfirm={() => void decideHost(selected.id, 'replace')}
+    onCancel={() => {
+      replaceConfirm = false
+    }}
+  >
+    <p>{replaceConfirmCopy(prompt.destination)}</p>
+  </AppDialog>
+{/if}
+
+{#if forgetConfirm && selected !== null && selectedSession.pendingHostKey === null}
+  <AppDialog
+    title="Forget trusted host key?"
+    confirmLabel={HOST_TRUST_ACTION_LABEL.forget}
+    onConfirm={() => void confirmForget()}
+    onCancel={() => {
+      forgetConfirm = false
+    }}
+  >
+    <p>{forgetConfirmCopy(formatTrustDestination(selected.host, selected.port))}</p>
   </AppDialog>
 {/if}
 

@@ -1,4 +1,5 @@
 import type { SshConnectResult, SshStatusEvent } from './ssh'
+import type { PendingHostKey } from './host-trust-ui'
 
 export type VisibleSessionState =
   'no-active-session' | 'connecting' | 'verification-required' | 'connected' | 'disconnecting'
@@ -39,7 +40,7 @@ export type SecretPrompt = {
 export type ProfileSessionUi = {
   state: VisibleSessionState
   sessionId: string | null
-  pendingHostKey: { sessionId: string; fingerprint: string; algorithm: string } | null
+  pendingHostKey: PendingHostKey | null
   secretPrompt: SecretPrompt | null
   secretKind: SecretKind | null
   error: string | null
@@ -158,9 +159,27 @@ export function applyConnectResult(
       state: 'verification-required',
       sessionId: null,
       pendingHostKey: {
+        kind: 'unknown',
         sessionId: result.sessionId,
         fingerprint: result.fingerprint,
         algorithm: result.algorithm
+      },
+      secretPrompt: null,
+      error: null
+    }
+  }
+  if (result.reason === 'host-changed') {
+    return {
+      ...session,
+      state: 'verification-required',
+      sessionId: null,
+      pendingHostKey: {
+        kind: 'changed',
+        sessionId: result.sessionId,
+        fingerprint: result.fingerprint,
+        algorithm: result.algorithm,
+        previousFingerprint: result.previousFingerprint,
+        previousAlgorithm: result.previousAlgorithm
       },
       secretPrompt: null,
       error: null
@@ -197,19 +216,18 @@ export function applyConnectResult(
       error: 'Authentication failed.'
     }
   }
-  const lastOutcome =
-    result.reason === 'timeout'
-      ? 'timed out'
-      : result.reason === 'canceled'
-        ? 'canceled'
-        : result.reason === 'host-changed'
-          ? 'host key rejected'
-          : 'network failed'
-  const error = 'message' in result ? result.message : result.reason
+  if (result.reason === 'canceled') {
+    return {
+      ...emptyProfileSession(),
+      lastOutcome: 'canceled',
+      error: null
+    }
+  }
+  const lastOutcome = result.reason === 'timeout' ? 'timed out' : 'network failed'
   return {
     ...emptyProfileSession(),
     lastOutcome,
-    error
+    error: result.message
   }
 }
 

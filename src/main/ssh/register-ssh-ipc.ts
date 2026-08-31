@@ -1,9 +1,18 @@
 import { ipcMain } from 'electron'
-import type { SshConnectResult, SshProfileConnectRequest } from '../../shared/ssh'
+import {
+  SSH_HOST_KEY_ACTIONS,
+  type SshConnectResult,
+  type SshHostKeyAction,
+  type SshProfileConnectRequest
+} from '../../shared/ssh'
 import type { SshApi } from './create-ssh-api'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
+}
+
+function isHostKeyAction(value: unknown): value is SshHostKeyAction {
+  return typeof value === 'string' && (SSH_HOST_KEY_ACTIONS as readonly string[]).includes(value)
 }
 
 function parseProfileConnectRequest(value: unknown): SshProfileConnectRequest | undefined {
@@ -44,10 +53,22 @@ export function registerSshIpc(api: SshApi): void {
     return api.connectFromProfile(parsed, { id: event.sender.id })
   })
   ipcMain.handle('ssh:confirmHostKey', (event, sessionId: unknown, action: unknown) => {
-    if (typeof sessionId !== 'string' || (action !== 'trust-always' && action !== 'abort')) {
+    if (typeof sessionId !== 'string' || !isHostKeyAction(action)) {
       return invalidRequest()
     }
     return api.confirmHostKey(sessionId, action, { id: event.sender.id })
+  })
+  ipcMain.handle('ssh:hostTrust', (_event, host: unknown, port: unknown) => {
+    if (typeof host !== 'string' || typeof port !== 'number') {
+      return { status: 'not-remembered' as const }
+    }
+    return api.hostTrust(host, port)
+  })
+  ipcMain.handle('ssh:forgetHostKey', (_event, host: unknown, port: unknown) => {
+    if (typeof host !== 'string' || typeof port !== 'number') {
+      return { ok: false as const, message: 'invalid request' }
+    }
+    return api.forgetHostKey(host, port)
   })
   ipcMain.handle('ssh:disconnect', (event, sessionId: unknown) => {
     if (typeof sessionId !== 'string') {

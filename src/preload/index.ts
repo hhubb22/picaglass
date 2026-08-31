@@ -9,6 +9,8 @@ const api: RendererApi = {
     connect: (req) => ipcRenderer.invoke('ssh:connect', req),
     confirmHostKey: (sessionId, action) =>
       ipcRenderer.invoke('ssh:confirmHostKey', sessionId, action),
+    hostTrust: (host, port) => ipcRenderer.invoke('ssh:hostTrust', host, port),
+    forgetHostKey: (host, port) => ipcRenderer.invoke('ssh:forgetHostKey', host, port),
     write: (sessionId, data) => {
       ipcRenderer.send('ssh:write', sessionId, data)
     },

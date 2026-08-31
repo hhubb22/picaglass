@@ -1,9 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdirSync, readFileSync, appendFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { Client, type ClientChannel, utils as ssh2Utils } from 'ssh2'
 import type {
+  ForgetHostKeyResult,
+  HostTrustState,
   SshAuth,
   SshConnectRequest,
   SshConnectResult,
@@ -21,16 +23,6 @@ export type SshDialogs = {
     defaultPath?: string
     properties?: Array<'openFile'>
   }) => Promise<{ canceled: boolean; filePaths: string[] }>
-  showMessageBox: (options: {
-    type?: 'question'
-    buttons?: string[]
-    defaultId?: number
-    cancelId?: number
-    message: string
-    detail?: string
-  }) => Promise<{
-    response: number
-  }>
 }
 
 export type ResolvedProfile = {
@@ -62,6 +54,8 @@ export type SshApi = {
     action: SshHostKeyAction,
     sender: SshSender
   ) => Promise<SshConnectResult>
+  hostTrust: (host: string, port: number) => Promise<HostTrustState>
+  forgetHostKey: (host: string, port: number) => Promise<ForgetHostKeyResult>
   write: (sessionId: string, data: Uint8Array, sender: SshSender) => void
   resize: (sessionId: string, cols: number, rows: number, sender: SshSender) => void
   disconnect: (sessionId: string, sender: SshSender) => Promise<void>
@@ -96,6 +90,7 @@ type SshSession = {
   clearAuthTimeout: () => void
   settleOpen: ((result: SshConnectResult) => void) | undefined
   failHandshake: ((result: SshReady & { ok: false }) => void) | undefined
+  pendingTrust: 'unknown' | 'changed' | undefined
   confirming: boolean
   ended: boolean
 }
@@ -153,22 +148,63 @@ function parseHostName(name: string): { host: string; port: number } | undefined
   return { host: name, port: 22 }
 }
 
+function parseKnownHostLine(line: string): { host: string; port: number } | undefined {
+  const trimmed = line.trim()
+  if (trimmed.length === 0 || trimmed.startsWith('#') || trimmed.startsWith('@')) {
+    return undefined
+  }
+  const name = trimmed.split(/\s+/)[0]
+  if (name === undefined) {
+    return undefined
+  }
+  return parseHostName(name)
+}
+
+function readKnownHostsText(
+  userDataPath: string
+): { ok: true; text: string } | { ok: false; message: string } {
+  try {
+    return { ok: true, text: readFileSync(knownHostsFile(userDataPath), 'utf8') }
+  } catch (err) {
+    if (isEnoent(err)) {
+      return { ok: true, text: '' }
+    }
+    const message = err instanceof Error ? err.message : 'cannot read known_hosts'
+    return { ok: false, message }
+  }
+}
+
+function knownHostLinesWithoutEndpoint(text: string, host: string, port: number): string[] {
+  const kept: string[] = []
+  for (const line of text.split('\n')) {
+    const parsed = parseKnownHostLine(line)
+    if (parsed !== undefined && parsed.host === host && parsed.port === port) {
+      continue
+    }
+    kept.push(line)
+  }
+  while (kept.length > 0 && kept[kept.length - 1] === '') {
+    kept.pop()
+  }
+  return kept
+}
+
+function writeKnownHosts(userDataPath: string, lines: string[]): void {
+  mkdirSync(join(userDataPath, 'ssh'), { recursive: true })
+  const body = lines.length === 0 ? '' : `${lines.join('\n')}\n`
+  writeFileSync(knownHostsFile(userDataPath), body)
+}
+
 function readKnownHostKey(
   userDataPath: string,
   host: string,
   port: number
 ): { ok: true; key: Buffer | undefined } | { ok: false; message: string } {
-  let text: string
-  try {
-    text = readFileSync(knownHostsFile(userDataPath), 'utf8')
-  } catch (err) {
-    if (isEnoent(err)) {
-      return { ok: true, key: undefined }
-    }
-    const message = err instanceof Error ? err.message : 'cannot read known_hosts'
-    return { ok: false, message }
+  const loaded = readKnownHostsText(userDataPath)
+  if (loaded.ok !== true) {
+    return loaded
   }
-  for (const line of text.split('\n')) {
+  for (const line of loaded.text.split('\n')) {
     const trimmed = line.trim()
     if (trimmed.length === 0 || trimmed.startsWith('#') || trimmed.startsWith('@')) {
       continue
@@ -189,9 +225,24 @@ function readKnownHostKey(
 }
 
 function persistKnownHost(userDataPath: string, host: string, port: number, key: Buffer): void {
-  mkdirSync(join(userDataPath, 'ssh'), { recursive: true })
-  const line = `${hostName(host, port)} ${hostKeyAlgorithm(key)} ${key.toString('base64')}\n`
-  appendFileSync(knownHostsFile(userDataPath), line)
+  const loaded = readKnownHostsText(userDataPath)
+  if (loaded.ok !== true) {
+    throw new Error(loaded.message)
+  }
+  const lines = knownHostLinesWithoutEndpoint(loaded.text, host, port)
+  lines.push(`${hostName(host, port)} ${hostKeyAlgorithm(key)} ${key.toString('base64')}`)
+  writeKnownHosts(userDataPath, lines)
+}
+
+function forgetKnownHost(userDataPath: string, host: string, port: number): void {
+  const loaded = readKnownHostsText(userDataPath)
+  if (loaded.ok !== true) {
+    throw new Error(loaded.message)
+  }
+  if (loaded.text.length === 0) {
+    return
+  }
+  writeKnownHosts(userDataPath, knownHostLinesWithoutEndpoint(loaded.text, host, port))
 }
 
 type ParsedConnect =
@@ -287,7 +338,49 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
   const sessions = new Map<string, SshSession>()
   const sessionByProfile = new Map<string, string>()
   const keyFiles = new Map<string, { senderId: number; filePath: string }>()
+  const sessionTrust = new Map<
+    string,
+    { key: Buffer; algorithm: string; fingerprint: string; holders: Set<string> }
+  >()
   const authTimeoutMs = deps.authTimeoutMs ?? 20_000
+
+  function endpointKey(host: string, port: number): string {
+    return `${host}\n${port}`
+  }
+
+  function clearSessionTrust(host: string, port: number): void {
+    sessionTrust.delete(endpointKey(host, port))
+  }
+
+  function grantSessionTrust(sessionId: string, session: SshSession): void {
+    if (session.hostKey === undefined) {
+      return
+    }
+    const id = endpointKey(session.host, session.port)
+    const existing = sessionTrust.get(id)
+    if (existing !== undefined && existing.key.equals(session.hostKey)) {
+      existing.holders.add(sessionId)
+      return
+    }
+    sessionTrust.set(id, {
+      key: session.hostKey,
+      algorithm: hostKeyAlgorithm(session.hostKey),
+      fingerprint: hostKeyFingerprint(session.hostKey),
+      holders: new Set([sessionId])
+    })
+  }
+
+  function releaseSessionTrust(sessionId: string, session: SshSession): void {
+    const id = endpointKey(session.host, session.port)
+    const existing = sessionTrust.get(id)
+    if (existing === undefined) {
+      return
+    }
+    existing.holders.delete(sessionId)
+    if (existing.holders.size === 0) {
+      sessionTrust.delete(id)
+    }
+  }
 
   function forgetSession(sessionId: string): SshSession | undefined {
     const session = sessions.get(sessionId)
@@ -298,6 +391,7 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
     if (sessionByProfile.get(session.profileId) === sessionId) {
       sessionByProfile.delete(session.profileId)
     }
+    releaseSessionTrust(sessionId, session)
     return session
   }
 
@@ -605,6 +699,7 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
         clearAuthTimeout: () => undefined,
         settleOpen: undefined,
         failHandshake: undefined,
+        pendingTrust: undefined,
         confirming: false,
         ended: false
       }
@@ -678,6 +773,36 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
           settle(failed)
         })
 
+        const pauseHostTrust = (
+          presented: Buffer,
+          previous: Buffer | undefined,
+          verify: (valid: boolean) => void
+        ): void => {
+          session.clearAuthTimeout()
+          session.verify = verify
+          if (previous !== undefined) {
+            session.pendingTrust = 'changed'
+            settle({
+              ok: false,
+              reason: 'host-changed',
+              sessionId,
+              fingerprint: hostKeyFingerprint(presented),
+              algorithm: hostKeyAlgorithm(presented),
+              previousFingerprint: hostKeyFingerprint(previous),
+              previousAlgorithm: hostKeyAlgorithm(previous)
+            })
+            return
+          }
+          session.pendingTrust = 'unknown'
+          settle({
+            ok: false,
+            reason: 'host-unknown',
+            sessionId,
+            fingerprint: hostKeyFingerprint(presented),
+            algorithm: hostKeyAlgorithm(presented)
+          })
+        }
+
         try {
           client.connect({
             host: parsed.host,
@@ -689,6 +814,7 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
             readyTimeout: 0,
             hostVerifier: (key, verify) => {
               session.hostKey = key
+              const once = sessionTrust.get(endpointKey(parsed.host, parsed.port))
               if (known.key !== undefined && known.key.equals(key)) {
                 verify(true)
                 session.armAuthTimeout()
@@ -696,26 +822,21 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
                 return
               }
               if (known.key !== undefined) {
-                session.clearAuthTimeout()
-                forgetSession(sessionId)
-                settle({
-                  ok: false,
-                  reason: 'host-changed',
-                  fingerprint: hostKeyFingerprint(key),
-                  algorithm: hostKeyAlgorithm(key)
-                })
-                verify(false)
+                pauseHostTrust(key, known.key, verify)
                 return
               }
-              session.clearAuthTimeout()
-              session.verify = verify
-              settle({
-                ok: false,
-                reason: 'host-unknown',
-                sessionId,
-                fingerprint: hostKeyFingerprint(key),
-                algorithm: hostKeyAlgorithm(key)
-              })
+              if (once !== undefined && once.key.equals(key)) {
+                once.holders.add(sessionId)
+                verify(true)
+                session.armAuthTimeout()
+                void openShell(sessionId).then(settle)
+                return
+              }
+              if (once !== undefined) {
+                pauseHostTrust(key, once.key, verify)
+                return
+              }
+              pauseHostTrust(key, undefined, verify)
             }
           })
         } catch (err) {
@@ -734,40 +855,34 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
       }
       if (action === 'abort') {
         dropSession(sessionId)
-        return invalid('aborted')
+        return { ok: false, reason: 'canceled', message: 'canceled' }
       }
       if (session.verify === undefined || session.confirming) {
         return invalid('unknown session')
       }
+      if (action === 'replace') {
+        if (session.pendingTrust !== 'changed') {
+          return invalid('unknown session')
+        }
+      } else if (action === 'trust-once' || action === 'trust-always') {
+        if (session.pendingTrust !== 'unknown') {
+          return invalid('unknown session')
+        }
+      } else {
+        return invalid('unknown session')
+      }
       session.confirming = true
-      const options: {
-        type: 'question'
-        buttons: string[]
-        defaultId: number
-        cancelId: number
-        message: string
-        detail?: string
-      } = {
-        type: 'question',
-        buttons: ['是', '否'],
-        defaultId: 1,
-        cancelId: 1,
-        message: '信任这台主机？'
-      }
-      if (session.hostKey !== undefined) {
-        options.detail = hostKeyFingerprint(session.hostKey)
-      }
       try {
-        const box = await deps.dialogs.showMessageBox(options)
+        // The renderer already collected the in-app Host Trust decision; apply it here.
         const current = sessions.get(sessionId)
         if (current === undefined || current.senderId !== sender.id) {
           return invalid('unknown session')
         }
-        if (box.response !== 0) {
-          dropSession(sessionId)
-          return invalid('host not trusted')
-        }
-        if (current.hostKey !== undefined) {
+        if (action === 'trust-always' || action === 'replace') {
+          if (current.hostKey === undefined) {
+            dropSession(sessionId)
+            return invalid('unknown session')
+          }
           try {
             persistKnownHost(deps.userDataPath, current.host, current.port, current.hostKey)
           } catch (err) {
@@ -775,23 +890,72 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
             const message = err instanceof Error ? err.message : 'cannot save host key'
             return invalid(message)
           }
+          clearSessionTrust(current.host, current.port)
+        }
+        if (action === 'trust-once') {
+          grantSessionTrust(sessionId, current)
         }
         if (current.verify !== undefined) {
           current.verify(true)
           current.verify = undefined
+          current.pendingTrust = undefined
           current.armAuthTimeout()
         }
         return openShell(sessionId)
-      } catch (err) {
-        dropSession(sessionId)
-        const message = err instanceof Error ? err.message : 'trust dialog failed'
-        return invalid(message)
       } finally {
         const current = sessions.get(sessionId)
         if (current !== undefined) {
           current.confirming = false
         }
       }
+    },
+
+    async hostTrust(host, port) {
+      const trimmed = host.trim()
+      if (trimmed.length === 0 || trimmed.includes('://') || trimmed.includes('/')) {
+        return { status: 'not-remembered' }
+      }
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        return { status: 'not-remembered' }
+      }
+      const known = readKnownHostKey(deps.userDataPath, trimmed, port)
+      if (known.ok !== true) {
+        return { status: 'not-remembered' }
+      }
+      if (known.key !== undefined) {
+        return {
+          status: 'remembered',
+          algorithm: hostKeyAlgorithm(known.key),
+          fingerprint: hostKeyFingerprint(known.key)
+        }
+      }
+      const once = sessionTrust.get(endpointKey(trimmed, port))
+      if (once !== undefined) {
+        return {
+          status: 'session',
+          algorithm: once.algorithm,
+          fingerprint: once.fingerprint
+        }
+      }
+      return { status: 'not-remembered' }
+    },
+
+    async forgetHostKey(host, port) {
+      const trimmed = host.trim()
+      if (trimmed.length === 0 || trimmed.includes('://') || trimmed.includes('/')) {
+        return { ok: false, message: 'invalid host' }
+      }
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        return { ok: false, message: 'invalid port' }
+      }
+      try {
+        forgetKnownHost(deps.userDataPath, trimmed, port)
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'cannot update known_hosts'
+        return { ok: false, message }
+      }
+      clearSessionTrust(trimmed, port)
+      return { ok: true }
     },
 
     write(sessionId, data, sender) {
@@ -865,6 +1029,7 @@ export function createSshApi(deps: CreateSshApiDeps): SshApi {
       for (const sessionId of [...sessions.keys()]) {
         dropSession(sessionId)
       }
+      sessionTrust.clear()
       keyFiles.clear()
     }
   }

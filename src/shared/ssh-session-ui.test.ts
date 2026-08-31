@@ -119,9 +119,31 @@ describe('ssh session UI', () => {
     })
     expect(next.state).toBe('verification-required')
     expect(next.pendingHostKey).toEqual({
+      kind: 'unknown',
       sessionId: 'pending-1',
       fingerprint: 'SHA256:abc',
       algorithm: 'ssh-ed25519'
+    })
+  })
+
+  it('shows Verification required for a changed host key with old and new fingerprints', () => {
+    const next = applyConnectResult(connecting(), {
+      ok: false,
+      reason: 'host-changed',
+      sessionId: 'pending-2',
+      fingerprint: 'SHA256:new',
+      algorithm: 'ssh-ed25519',
+      previousFingerprint: 'SHA256:old',
+      previousAlgorithm: 'ssh-ed25519'
+    })
+    expect(next.state).toBe('verification-required')
+    expect(next.pendingHostKey).toEqual({
+      kind: 'changed',
+      sessionId: 'pending-2',
+      fingerprint: 'SHA256:new',
+      algorithm: 'ssh-ed25519',
+      previousFingerprint: 'SHA256:old',
+      previousAlgorithm: 'ssh-ed25519'
     })
   })
 
@@ -188,7 +210,7 @@ describe('ssh session UI', () => {
     expect(next.error).toBe('session already exists')
   })
 
-  it('returns to No active session when host verification is aborted', () => {
+  it('returns to No active session without an error when host verification is canceled', () => {
     const pending = applyConnectResult(connecting(), {
       ok: false,
       reason: 'host-unknown',
@@ -198,11 +220,13 @@ describe('ssh session UI', () => {
     })
     const next = applyConnectResult(pending, {
       ok: false,
-      reason: 'invalid',
-      message: 'aborted'
+      reason: 'canceled',
+      message: 'canceled'
     })
     expect(next.state).toBe('no-active-session')
     expect(next.pendingHostKey).toBe(null)
+    expect(next.error).toBe(null)
+    expect(next.lastOutcome).toBe('canceled')
   })
 
   it('enters Disconnecting then operator-disconnected on a local disconnect', () => {

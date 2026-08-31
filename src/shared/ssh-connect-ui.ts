@@ -15,7 +15,7 @@ function applyConnectResult(
   if (result.ok) {
     return { sessionId: result.sessionId, pending: null, error: null }
   }
-  if (result.reason === 'host-unknown') {
+  if (result.reason === 'host-unknown' || result.reason === 'host-changed') {
     return {
       sessionId: null,
       pending: {

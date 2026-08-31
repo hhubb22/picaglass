@@ -42,9 +42,7 @@ describe('createSshApi auth', () => {
     userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
-    api = testApi(userDataPath, {
-      showMessageBox: async () => ({ response: 0 })
-    })
+    api = testApi(userDataPath)
 
     const unknown = await api.connect(
       connectRequest(server.port, { method: 'password', password: 'wrong-password' }),
@@ -81,9 +79,7 @@ describe('createSshApi auth', () => {
     userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
-    api = testApi(userDataPath, {
-      showMessageBox: async () => ({ response: 0 })
-    })
+    api = testApi(userDataPath)
 
     const unknown = await api.connect(connectRequest(server.port), { id: 1 })
     if (unknown.ok || unknown.reason !== 'host-unknown') {
@@ -115,14 +111,7 @@ describe('createSshApi auth', () => {
     userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem, { stallAuth: true })
-    api = testApi(
-      userDataPath,
-      {
-        showMessageBox: async () => ({ response: 0 })
-      },
-      undefined,
-      { authTimeoutMs: 80 }
-    )
+    api = testApi(userDataPath, undefined, undefined, { authTimeoutMs: 80 })
 
     const unknown = await api.connect(connectRequest(server.port), { id: 1 })
     if (unknown.ok || unknown.reason !== 'host-unknown') {
@@ -160,14 +149,7 @@ describe('createSshApi auth', () => {
     userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem, { stallAuth: true })
-    api = testApi(
-      userDataPath,
-      {
-        showMessageBox: async () => ({ response: 0 })
-      },
-      undefined,
-      { authTimeoutMs: 80 }
-    )
+    api = testApi(userDataPath, undefined, undefined, { authTimeoutMs: 80 })
 
     const unknown = await api.connect(connectRequest(server.port), { id: 1 })
     if (unknown.ok || unknown.reason !== 'host-unknown') {
@@ -197,14 +179,7 @@ describe('createSshApi auth', () => {
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
     const emits: CapturedEmit[] = []
-    api = testApi(
-      userDataPath,
-      {
-        showMessageBox: async () => ({ response: 0 })
-      },
-      emits,
-      { authTimeoutMs: 1500 }
-    )
+    api = testApi(userDataPath, undefined, emits, { authTimeoutMs: 1500 })
 
     const unknown = await api.connect(connectRequest(server.port), { id: 1 })
     if (unknown.ok || unknown.reason !== 'host-unknown') {
@@ -253,14 +228,7 @@ describe('createSshApi auth', () => {
     userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem, { stallShell: true })
-    api = testApi(
-      userDataPath,
-      {
-        showMessageBox: async () => ({ response: 0 })
-      },
-      undefined,
-      { authTimeoutMs: 80 }
-    )
+    api = testApi(userDataPath, undefined, undefined, { authTimeoutMs: 80 })
 
     const unknown = await api.connect(connectRequest(server.port), { id: 1 })
     if (unknown.ok || unknown.reason !== 'host-unknown') {

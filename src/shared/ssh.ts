@@ -32,10 +32,25 @@ export type SshProfileConnectRequest = {
   rows: number
 }
 
+export type HostTrustState =
+  | { status: 'not-remembered' }
+  | { status: 'session'; algorithm: string; fingerprint: string }
+  | { status: 'remembered'; algorithm: string; fingerprint: string }
+
+export type ForgetHostKeyResult = { ok: true } | { ok: false; message: string }
+
 export type SshConnectResult =
   | { ok: true; sessionId: string }
   | { ok: false; reason: 'host-unknown'; sessionId: string; fingerprint: string; algorithm: string }
-  | { ok: false; reason: 'host-changed'; fingerprint: string; algorithm: string }
+  | {
+      ok: false
+      reason: 'host-changed'
+      sessionId: string
+      fingerprint: string
+      algorithm: string
+      previousFingerprint: string
+      previousAlgorithm: string
+    }
   | { ok: false; reason: 'secret-required'; kind: 'password' | 'passphrase' }
   | {
       ok: false
@@ -50,7 +65,9 @@ export type SshSecretRequirement =
   | { ok: true; kind: 'password' | 'passphrase' | 'none' }
   | { ok: false; reason: 'unknown-profile' | 'cannot-read-key' }
 
-export type SshHostKeyAction = 'trust-always' | 'abort'
+export const SSH_HOST_KEY_ACTIONS = ['trust-always', 'trust-once', 'replace', 'abort'] as const
+
+export type SshHostKeyAction = (typeof SSH_HOST_KEY_ACTIONS)[number]
 
 export type SshStatusEvent = {
   sessionId: string
@@ -68,6 +85,8 @@ export type RendererApi = {
     secretRequirement: (profileId: string) => Promise<SshSecretRequirement>
     connect: (req: SshProfileConnectRequest) => Promise<SshConnectResult>
     confirmHostKey: (sessionId: string, action: SshHostKeyAction) => Promise<SshConnectResult>
+    hostTrust: (host: string, port: number) => Promise<HostTrustState>
+    forgetHostKey: (host: string, port: number) => Promise<ForgetHostKeyResult>
     write: (sessionId: string, data: Uint8Array) => void
     resize: (sessionId: string, cols: number, rows: number) => void
     disconnect: (sessionId: string) => Promise<void>

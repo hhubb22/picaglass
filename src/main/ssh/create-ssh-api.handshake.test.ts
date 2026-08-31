@@ -62,17 +62,11 @@ describe('createSshApi handshake', () => {
     expect(serialized).not.toContain('BEGIN RSA PRIVATE KEY')
   })
 
-  it('aborts an unknown host without a Yes/No box and the next connect is still host-unknown', async () => {
+  it('aborts an unknown host and the next connect is still host-unknown', async () => {
     userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
-    let messageBoxes = 0
-    api = testApi(userDataPath, {
-      showMessageBox: async () => {
-        messageBoxes += 1
-        return { response: 0 }
-      }
-    })
+    api = testApi(userDataPath)
 
     const first = await api.connect(connectRequest(server.port), { id: 1 })
     if (first.ok || first.reason !== 'host-unknown') {
@@ -80,7 +74,6 @@ describe('createSshApi handshake', () => {
     }
 
     await api.confirmHostKey(first.sessionId, 'abort', { id: 1 })
-    expect(messageBoxes).toBe(0)
 
     const second = await api.connect(connectRequest(server.port), { id: 1 })
 
@@ -96,7 +89,6 @@ describe('createSshApi handshake', () => {
     }
     expect(second.sessionId).not.toBe(first.sessionId)
     expect(server.shellOpened()).toBe(false)
-    expect(messageBoxes).toBe(0)
   })
 
   it('pickPrivateKey returns an opaque keyRef and connect still pauses without a shell', async () => {
@@ -145,19 +137,11 @@ describe('createSshApi handshake', () => {
     expect(await api.pickPrivateKey({ id: 1 })).toBeNull()
   })
 
-  it('trust-always Yes shows a native box then opens a shell with xterm-256color and the current cols/rows', async () => {
+  it('trust-always opens a shell with xterm-256color and the current cols/rows', async () => {
     userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
-    let messageBoxes = 0
-    api = testApi(userDataPath, {
-      showMessageBox: async (options) => {
-        expect(options.cancelId).toBe(1)
-        expect(options.defaultId).toBe(1)
-        messageBoxes += 1
-        return { response: 0 }
-      }
-    })
+    api = testApi(userDataPath)
 
     const unknown = await api.connect(connectRequest(server.port), { id: 1 })
     if (unknown.ok || unknown.reason !== 'host-unknown') {
@@ -166,7 +150,6 @@ describe('createSshApi handshake', () => {
 
     const trusted = await api.confirmHostKey(unknown.sessionId, 'trust-always', { id: 1 })
 
-    expect(messageBoxes).toBe(1)
     expect(trusted).toEqual({ ok: true, sessionId: unknown.sessionId })
     expect(server.shellOpened()).toBe(true)
     expect(server.pty()).toEqual({ term: 'xterm-256color', cols: 80, rows: 24 })
@@ -180,9 +163,7 @@ describe('createSshApi handshake', () => {
     userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
-    api = testApi(userDataPath, {
-      showMessageBox: async () => ({ response: 0 })
-    })
+    api = testApi(userDataPath)
 
     const unknown = await api.connect(connectRequest(server.port), { id: 1 })
     if (unknown.ok || unknown.reason !== 'host-unknown') {
@@ -196,31 +177,24 @@ describe('createSshApi handshake', () => {
     expect(server.pty()).toEqual({ term: 'xterm-256color', cols: 132, rows: 43 })
   })
 
-  it('trust-always No does not persist the host and the next connect is still host-unknown', async () => {
+  it('abort does not persist the host and the next connect is still host-unknown', async () => {
     userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
-    let messageBoxes = 0
-    api = testApi(userDataPath, {
-      showMessageBox: async () => {
-        messageBoxes += 1
-        return { response: 1 }
-      }
-    })
+    api = testApi(userDataPath)
 
     const first = await api.connect(connectRequest(server.port), { id: 1 })
     if (first.ok || first.reason !== 'host-unknown') {
       throw new Error('expected host-unknown')
     }
 
-    const rejected = await api.confirmHostKey(first.sessionId, 'trust-always', { id: 1 })
+    const rejected = await api.confirmHostKey(first.sessionId, 'abort', { id: 1 })
 
     expect(rejected).toEqual({
       ok: false,
-      reason: 'invalid',
-      message: 'host not trusted'
+      reason: 'canceled',
+      message: 'canceled'
     })
-    expect(messageBoxes).toBe(1)
     expect(server.shellOpened()).toBe(false)
     expect(() => readFileSync(join(userDataPath!, 'ssh', 'known_hosts'))).toThrow()
 
@@ -240,9 +214,7 @@ describe('createSshApi handshake', () => {
     userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
-    api = testApi(userDataPath, {
-      showMessageBox: async () => ({ response: 0 })
-    })
+    api = testApi(userDataPath)
 
     const unknown = await api.connect(connectRequest(server.port), { id: 1 })
     if (unknown.ok || unknown.reason !== 'host-unknown') {
@@ -279,9 +251,7 @@ describe('createSshApi handshake', () => {
     vi.stubEnv('HOME', homePath)
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
-    api = testApi(appUserDataPath, {
-      showMessageBox: async () => ({ response: 0 })
-    })
+    api = testApi(appUserDataPath)
 
     const unknown = await api.connect(connectRequest(server.port), { id: 1 })
     if (unknown.ok || unknown.reason !== 'host-unknown') {
@@ -296,18 +266,12 @@ describe('createSshApi handshake', () => {
     )
   })
 
-  it('rejects a changed host key at the same host and port without opening a shell or trust dialog', async () => {
+  it('pauses a changed host key with old and new fingerprints without opening a shell', async () => {
     userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
     const firstHostKey = generateHostKey(userDataPath, 'host-a')
     const changedHostKey = generateHostKey(userDataPath, 'host-b')
     server = await startServer(firstHostKey.pem)
-    let messageBoxes = 0
-    api = testApi(userDataPath, {
-      showMessageBox: async () => {
-        messageBoxes += 1
-        return { response: 0 }
-      }
-    })
+    api = testApi(userDataPath)
 
     const unknown = await api.connect(connectRequest(server.port), { id: 1 })
     if (unknown.ok || unknown.reason !== 'host-unknown') {
@@ -317,7 +281,6 @@ describe('createSshApi handshake', () => {
     if (!trusted.ok) {
       throw new Error('expected trust-always to succeed')
     }
-    expect(messageBoxes).toBe(1)
 
     const port = server.port
     await api.disconnect(trusted.sessionId, { id: 1 })
@@ -329,22 +292,22 @@ describe('createSshApi handshake', () => {
     expect(changed).toEqual({
       ok: false,
       reason: 'host-changed',
+      sessionId: expect.any(String),
       fingerprint: changedHostKey.fingerprint,
-      algorithm: 'ssh-ed25519'
+      algorithm: 'ssh-ed25519',
+      previousFingerprint: firstHostKey.fingerprint,
+      previousAlgorithm: 'ssh-ed25519'
     })
     expect(server.shellOpened()).toBe(false)
-
-    const override = await api.confirmHostKey(
-      trusted.sessionId,
-      'trust-always',
-      { id: 1 }
-    )
-    expect(override).toEqual({
+    if (changed.ok || changed.reason !== 'host-changed') {
+      throw new Error('expected host-changed')
+    }
+    const skipped = await api.confirmHostKey(changed.sessionId, 'trust-always', { id: 1 })
+    expect(skipped).toEqual({
       ok: false,
       reason: 'invalid',
       message: 'unknown session'
     })
-    expect(messageBoxes).toBe(1)
     expect(server.shellOpened()).toBe(false)
   })
 
@@ -355,8 +318,7 @@ describe('createSshApi handshake', () => {
     execFileSync('ssh-keygen', ['-t', 'ed25519', '-f', clientKeyPath, '-N', '', '-q'])
     server = await startServer(hostKey.pem)
     api = testApi(userDataPath, {
-      showOpenDialog: async () => ({ canceled: false, filePaths: [clientKeyPath] }),
-      showMessageBox: async () => ({ response: 0 })
+      showOpenDialog: async () => ({ canceled: false, filePaths: [clientKeyPath] })
     })
 
     const picked = await api.pickPrivateKey({ id: 1 })
@@ -403,7 +365,7 @@ describe('createSshApi handshake', () => {
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
     const emits: CapturedEmit[] = []
-    api = testApi(userDataPath, { showMessageBox: async () => ({ response: 0 }) }, emits)
+    api = testApi(userDataPath, undefined, emits)
 
     const unknown = await api.connect(connectRequest(server.port), { id: 1 })
     if (unknown.ok || unknown.reason !== 'host-unknown') {
@@ -438,9 +400,7 @@ describe('createSshApi handshake', () => {
     userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
     const hostKey = generateHostKey(userDataPath)
     server = await startServer(hostKey.pem)
-    api = testApi(userDataPath, {
-      showMessageBox: async () => ({ response: 0 })
-    })
+    api = testApi(userDataPath)
 
     const unknown = await api.connect(connectRequest(server.port), { id: 1 })
     if (unknown.ok || unknown.reason !== 'host-unknown') {
@@ -456,33 +416,5 @@ describe('createSshApi handshake', () => {
       message: expect.any(String)
     })
     expect(server.shellOpened()).toBe(false)
-  })
-
-  it('a thrown trust dialog returns a structured failure and drops the session', async () => {
-    userDataPath = await mkdtemp(join(tmpdir(), 'picaglass-ssh-'))
-    const hostKey = generateHostKey(userDataPath)
-    server = await startServer(hostKey.pem)
-    api = testApi(userDataPath, {
-      showMessageBox: async () => {
-        throw new Error('dialog failed')
-      }
-    })
-
-    const unknown = await api.connect(connectRequest(server.port), { id: 1 })
-    if (unknown.ok || unknown.reason !== 'host-unknown') {
-      throw new Error('expected host-unknown')
-    }
-
-    const trusted = await api.confirmHostKey(unknown.sessionId, 'trust-always', { id: 1 })
-
-    expect(trusted).toEqual({
-      ok: false,
-      reason: 'invalid',
-      message: expect.any(String)
-    })
-    expect(server.shellOpened()).toBe(false)
-
-    const leftover = await api.confirmHostKey(unknown.sessionId, 'abort', { id: 1 })
-    expect(leftover).toEqual({ ok: false, reason: 'invalid', message: 'unknown session' })
   })
 })
