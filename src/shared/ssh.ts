@@ -1,3 +1,11 @@
+import type {
+  CreateProfileInput,
+  CreateProfileResult,
+  ProfileKeyPick,
+  ProfileWorkspace,
+  SelectProfileResult
+} from './profile'
+
 export type SshAuth =
   | { method: 'password'; password: string }
   | { method: 'privateKey'; keyRef: string; passphrase?: string }
@@ -23,7 +31,7 @@ export type SshConnectResult =
       message: string
     }
 
-/** Opaque Connection Profile identity the current single-form renderer uses until saved profiles exist. */
+/** Occupancy key used by session-manager tests until connect-from-profile (#10) supplies real ids. */
 export const SINGLE_FORM_PROFILE_ID = 'single-form'
 
 export type SshHostKeyAction = 'trust-always' | 'abort'
@@ -48,5 +56,16 @@ export type RendererApi = {
     cancel: (profileId: string) => Promise<void>
     onData: (handler: (sessionId: string, chunk: Uint8Array) => void) => () => void
     onStatus: (handler: (event: SshStatusEvent) => void) => () => void
+  }
+  profiles: {
+    load: () => Promise<ProfileWorkspace>
+    create: (input: CreateProfileInput) => Promise<CreateProfileResult>
+    select: (profileId: string) => Promise<SelectProfileResult>
+    pickPrivateKey: () => Promise<ProfileKeyPick | null>
+  }
+  workspace: {
+    onCloseRequested: (handler: () => void) => () => void
+    confirmClose: () => Promise<void>
+    setCloseGuard: (blockClose: boolean) => Promise<void>
   }
 }
