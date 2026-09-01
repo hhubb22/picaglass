@@ -82,6 +82,9 @@
   import SecretPrompt from './SecretPrompt.svelte'
   import { createTerminalRegistry } from './terminal-registry'
   import '@xterm/xterm/css/xterm.css'
+  // PROTOTYPE(throwaway #58): 控件粗稿样式与变体切换条，勿合入 main
+  import './assets/prototype-controls.css'
+  import PrototypeControlsSwitcher from './PrototypeControlsSwitcher.svelte'
 
   let workspace = $state<ProfileWorkspace>({
     profiles: [],
@@ -1152,6 +1155,7 @@
     )
   )}
   <AppDialog
+    tone="danger"
     title="Replace trusted host key?"
     confirmLabel={HOST_TRUST_ACTION_LABEL.replace}
     onConfirm={() => void decideHost(selected.id, 'replace')}
@@ -1165,6 +1169,7 @@
 
 {#if forgetConfirm && selected !== null && selectedSession.pendingHostKey === null}
   <AppDialog
+    tone="danger"
     title="Forget trusted host key?"
     confirmLabel={HOST_TRUST_ACTION_LABEL.forget}
     onConfirm={() => void confirmForget()}
@@ -1234,6 +1239,7 @@
   {#if profile !== undefined}
     {@const confirmation = disconnectProfileConfirmation(profile.label)}
     <AppDialog
+      tone="danger"
       title={confirmation.title}
       confirmLabel={confirmation.confirmLabel}
       onConfirm={() => void confirmDisconnect()}
@@ -1248,6 +1254,7 @@
 
 {#if disconnectAllPrompt !== null}
   <AppDialog
+    tone="danger"
     title={disconnectAllPrompt.title}
     confirmLabel={disconnectAllPrompt.confirmLabel}
     onConfirm={() => void confirmDisconnectAll()}
@@ -1262,6 +1269,7 @@
 {#if deleteConfirm !== null}
   {@const confirmation = deleteProfileConfirmation(deleteConfirm.label, deleteConfirm.occupied)}
   <AppDialog
+    tone="danger"
     title={confirmation.title}
     confirmLabel={confirmation.confirmLabel}
     onConfirm={() => void confirmDelete()}
@@ -1390,3 +1398,5 @@
     overflow: auto;
   }
 </style>
+
+<PrototypeControlsSwitcher />

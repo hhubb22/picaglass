@@ -7,6 +7,8 @@
     title,
     confirmLabel,
     extraLabel,
+    // PROTOTYPE(throwaway #58): 破坏性对话框传 tone="danger"
+    tone = 'primary',
     onConfirm,
     onExtra,
     onCancel,
@@ -15,6 +17,7 @@
     title: string
     confirmLabel: string
     extraLabel?: string
+    tone?: 'primary' | 'danger'
     onConfirm: () => void
     onExtra?: () => void
     onCancel: () => void
@@ -46,8 +49,8 @@
       {#if extraLabel !== undefined && onExtra !== undefined}
         <button type="button" onclick={onExtra}>{extraLabel}</button>
       {/if}
-      <button type="button" onclick={onConfirm}>{confirmLabel}</button>
-      <button type="button" onclick={onCancel}>Cancel</button>
+      <button type="button" data-kind={tone} onclick={onConfirm}>{confirmLabel}</button>
+      <button type="button" data-kind="quiet" onclick={onCancel}>Cancel</button>
     </div>
   </div>
 </div>

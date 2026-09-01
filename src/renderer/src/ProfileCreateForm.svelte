@@ -137,8 +137,8 @@
   </details>
 
   <div class="actions">
-    <button type="submit" disabled={busy}>Save</button>
-    <button type="button" onclick={onCancel} disabled={busy}>Cancel</button>
+    <button type="submit" data-kind="primary" disabled={busy}>Save</button>
+    <button type="button" data-kind="quiet" onclick={onCancel} disabled={busy}>Cancel</button>
   </div>
 </form>
 

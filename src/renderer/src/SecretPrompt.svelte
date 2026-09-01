@@ -59,8 +59,8 @@
         <input bind:value={secret} type="password" autocomplete="off" disabled={busy} />
       </label>
       <div class="actions">
-        <button type="submit" disabled={busy}>{confirmLabel}</button>
-        <button type="button" disabled={busy} onclick={onCancel}>Cancel</button>
+        <button type="submit" data-kind="primary" disabled={busy}>{confirmLabel}</button>
+        <button type="button" data-kind="quiet" disabled={busy} onclick={onCancel}>Cancel</button>
       </div>
     </form>
   </div>

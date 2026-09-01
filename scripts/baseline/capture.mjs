@@ -20,7 +20,10 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const ROOT = process.cwd()
-const OUT_DIR = join(ROOT, 'docs/design/baseline')
+// PROTOTYPE(#58): BASELINE_VARIANT/BASELINE_ONLY/BASELINE_OUT 让同一回路按控件变体出图
+const VARIANT = process.env.BASELINE_VARIANT ?? null
+const ONLY = (process.env.BASELINE_ONLY ?? '').split(',').filter(Boolean)
+const OUT_DIR = process.env.BASELINE_OUT ?? join(ROOT, 'docs/design/baseline')
 const RENDERER_DIR = join(ROOT, 'out/renderer')
 const PORT = 9333
 const payloads = JSON.parse(readFileSync(join(ROOT, 'scripts/baseline/payloads.json'), 'utf8'))
@@ -212,6 +215,9 @@ async function ev(expression) {
 }
 
 async function shot(theme, name) {
+  if (ONLY.length > 0 && !ONLY.some((prefix) => name.startsWith(prefix))) {
+    return
+  }
   const dir = join(OUT_DIR, theme)
   mkdirSync(dir, { recursive: true })
   const result = await cdp.send('Page.captureScreenshot', { format: 'png' })
@@ -491,6 +497,10 @@ async function main() {
 
     const mocked = await ev('window.api?.__isBaselineMock === true')
     if (!mocked) {
+      await reloadApp()
+    }
+    if (VARIANT !== null) {
+      await ev(`localStorage.setItem('__controlsVariant', ${JSON.stringify(VARIANT)}); localStorage.setItem('__controlsBar', 'hidden')`)
       await reloadApp()
     }
 

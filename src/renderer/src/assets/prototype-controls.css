@@ -1,0 +1,329 @@
+/*
+ * PROTOTYPE（throwaway，prototype/buttons-controls 分支专用，勿合入 main）
+ *
+ * Wayfinder #58：按钮与表单控件视觉粗稿。三套变体回答同一个问题：
+ * 按钮层级/尺寸/状态长什么样。方向基准已由 map Notes 锁定（Twingate
+ * 两级体系），变体在「描边 vs 填充」「尺寸阶梯」「密度」上结构性不同：
+ *
+ *   A 描边派：Tailscale 源码路线。白底 + 1px 灰边 + 微投影，radius 6px，
+ *     38/32 两档高。焦点用 2px outline。
+ *   B 填充派：Twingate 截图路线。浅灰填充无边框，radius 8px，36/32 两档。
+ *     焦点用三层 ring。
+ *   C 紧凑派：回应「工作区太挤」。32/28 高度、13px 字、radius 5px。
+ *
+ * 实现说明：scoped Svelte 样式优先级压不住，这里统一用 !important（粗稿
+ * 不追求可维护）。导航类按钮（侧栏列表项、tabs）不属于本票，排除在外。
+ */
+
+/* ---------- 变体 token ---------- */
+
+html[data-pc='A'] {
+  --pc-h: 38px;
+  --pc-h-sm: 32px;
+  --pc-pad: 8px 16px;
+  --pc-pad-sm: 4px 12px;
+  --pc-font-size: 14px;
+  --pc-font-size-sm: 13px;
+  --pc-font-weight: 500;
+  --pc-radius: 6px;
+  --pc-accent: #3f5db3;
+
+  --pc-btn-bg: #ffffff;
+  --pc-btn-border: 1px solid #dad6d5;
+  --pc-btn-shadow: 0 1px 1px rgba(0, 0, 0, 0.04);
+  --pc-btn-color: #232222;
+  --pc-btn-hover-bg: #ffffff;
+  --pc-btn-hover-border: 1px solid #afacab;
+  --pc-btn-hover-shadow: 0 1px 1px rgba(0, 0, 0, 0.04);
+
+  --pc-primary-bg: #232222;
+  --pc-primary-color: #ffffff;
+  --pc-primary-border: 1px solid #232222;
+  --pc-primary-hover-bg: #444342;
+  --pc-primary-hover-border: 1px solid #444342;
+
+  --pc-danger-bg: #ffffff;
+  --pc-danger-color: #940821;
+  --pc-danger-border: 1px solid #dad6d5;
+  --pc-danger-hover-bg: #fff7f7;
+  --pc-danger-hover-border: 1px solid #f68f87;
+
+  --pc-quiet-color: #706e6d;
+  --pc-quiet-hover-bg: #f7f5f4;
+
+  --pc-focus: 0 0 0 2px #ffffff, 0 0 0 4px #3f5db3;
+
+  --pc-input-bg: #ffffff;
+  --pc-input-border: 1px solid #dad6d5;
+  --pc-input-hover-border: 1px solid #afacab;
+  --pc-input-focus-bg: #ffffff;
+
+  --pc-label-size: 14px;
+  --pc-label-color: #232222;
+  --pc-label-transform: none;
+  --pc-label-spacing: normal;
+  --pc-form-gap: 16px;
+}
+
+html[data-pc='B'] {
+  --pc-h: 36px;
+  --pc-h-sm: 32px;
+  --pc-pad: 8px 16px;
+  --pc-pad-sm: 5px 12px;
+  --pc-font-size: 14px;
+  --pc-font-size-sm: 13px;
+  --pc-font-weight: 500;
+  --pc-radius: 8px;
+  --pc-accent: #171717;
+
+  --pc-btn-bg: #f3f4f5;
+  --pc-btn-border: 1px solid transparent;
+  --pc-btn-shadow: none;
+  --pc-btn-color: #171717;
+  --pc-btn-hover-bg: #e7e7ea;
+  --pc-btn-hover-border: 1px solid transparent;
+  --pc-btn-hover-shadow: none;
+
+  --pc-primary-bg: #171717;
+  --pc-primary-color: #ffffff;
+  --pc-primary-border: 1px solid transparent;
+  --pc-primary-hover-bg: #3a3a3d;
+  --pc-primary-hover-border: 1px solid transparent;
+
+  --pc-danger-bg: #fdecec;
+  --pc-danger-color: #940821;
+  --pc-danger-border: 1px solid transparent;
+  --pc-danger-hover-bg: #fbdcdc;
+  --pc-danger-hover-border: 1px solid transparent;
+
+  --pc-quiet-color: #6b7280;
+  --pc-quiet-hover-bg: #f3f4f5;
+
+  --pc-focus: 0 0 0 2px #ffffff, 0 0 0 4px #171717;
+
+  --pc-input-bg: #f3f4f5;
+  --pc-input-border: 1px solid transparent;
+  --pc-input-hover-border: 1px solid transparent;
+  --pc-input-focus-bg: #ffffff;
+
+  --pc-label-size: 14px;
+  --pc-label-color: #232222;
+  --pc-label-transform: none;
+  --pc-label-spacing: normal;
+  --pc-form-gap: 16px;
+}
+
+html[data-pc='C'] {
+  --pc-h: 32px;
+  --pc-h-sm: 28px;
+  --pc-pad: 5px 12px;
+  --pc-pad-sm: 3px 10px;
+  --pc-font-size: 13px;
+  --pc-font-size-sm: 12px;
+  --pc-font-weight: 500;
+  --pc-radius: 5px;
+  --pc-accent: #2e2d2d;
+
+  --pc-btn-bg: #ffffff;
+  --pc-btn-border: 1px solid #cfcfcf;
+  --pc-btn-shadow: none;
+  --pc-btn-color: #232222;
+  --pc-btn-hover-bg: #f5f5f5;
+  --pc-btn-hover-border: 1px solid #a8a8a8;
+  --pc-btn-hover-shadow: none;
+
+  --pc-primary-bg: #2e2d2d;
+  --pc-primary-color: #ffffff;
+  --pc-primary-border: 1px solid #2e2d2d;
+  --pc-primary-hover-bg: #4a4949;
+  --pc-primary-hover-border: 1px solid #4a4949;
+
+  --pc-danger-bg: #ffffff;
+  --pc-danger-color: #940821;
+  --pc-danger-border: 1px solid #e3b4ba;
+  --pc-danger-hover-bg: #faf2f3;
+  --pc-danger-hover-border: 1px solid #d04841;
+
+  --pc-quiet-color: #706e6d;
+  --pc-quiet-hover-bg: #f0f0f0;
+
+  --pc-focus: 0 0 0 2px #ffffff, 0 0 0 4px #2e2d2d;
+
+  --pc-input-bg: #ffffff;
+  --pc-input-border: 1px solid #cfcfcf;
+  --pc-input-hover-border: 1px solid #a8a8a8;
+  --pc-input-focus-bg: #ffffff;
+
+  --pc-label-size: 12px;
+  --pc-label-color: #706e6d;
+  --pc-label-transform: uppercase;
+  --pc-label-spacing: 0.04em;
+  --pc-form-gap: 12px;
+}
+
+/* ---------- 深色跟随（粗稿只做映射，不定稿） ---------- */
+
+@media (prefers-color-scheme: dark) {
+  html[data-pc] {
+    --pc-btn-bg: #242424;
+    --pc-btn-border: 1px solid #3a3a3a;
+    --pc-btn-shadow: none;
+    --pc-btn-color: #e8e8e8;
+    --pc-btn-hover-bg: #2e2e2e;
+    --pc-btn-hover-border: 1px solid #4a4a4a;
+
+    --pc-primary-bg: #e8e8e8;
+    --pc-primary-color: #161616;
+    --pc-primary-border: 1px solid #e8e8e8;
+    --pc-primary-hover-bg: #ffffff;
+    --pc-primary-hover-border: 1px solid #ffffff;
+
+    --pc-danger-bg: #2a1c1e;
+    --pc-danger-color: #e25555;
+    --pc-danger-border: 1px solid #4a2c30;
+    --pc-danger-hover-bg: #332023;
+    --pc-danger-hover-border: 1px solid #6b3940;
+
+    --pc-quiet-color: #a3a3a3;
+    --pc-quiet-hover-bg: #242424;
+
+    --pc-focus: 0 0 0 2px #161616, 0 0 0 4px #8fa3d9;
+
+    --pc-input-bg: #1d1d1d;
+    --pc-input-border: 1px solid #3a3a3a;
+    --pc-input-hover-border: 1px solid #4a4a4a;
+    --pc-input-focus-bg: #1d1d1d;
+
+    --pc-label-color: #a3a3a3;
+  }
+  html[data-pc='B'] {
+    --pc-btn-bg: #262628;
+    --pc-btn-border: 1px solid transparent;
+    --pc-btn-hover-bg: #333335;
+    --pc-btn-hover-border: 1px solid transparent;
+    --pc-input-bg: #262628;
+    --pc-input-border: 1px solid transparent;
+    --pc-input-hover-border: 1px solid transparent;
+  }
+}
+
+/* ---------- 控件应用层 ---------- */
+
+/* 行动按钮：排除导航（侧栏列表项、两处 tabs）。 */
+html[data-pc] button:where(:not(#profile-sidebar li button):not(.tabs button)) {
+  height: var(--pc-h) !important;
+  padding: var(--pc-pad) !important;
+  font-size: var(--pc-font-size) !important;
+  font-weight: var(--pc-font-weight) !important;
+  border-radius: var(--pc-radius) !important;
+  border: var(--pc-btn-border) !important;
+  background: var(--pc-btn-bg) !important;
+  color: var(--pc-btn-color) !important;
+  box-shadow: var(--pc-btn-shadow) !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  gap: 6px !important;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease !important;
+}
+
+/* 工具条/面板条/侧栏菜单用小号档。 */
+html[data-pc] .toolbar button:not(.tabs button),
+html[data-pc] .bar button:not(.tabs button),
+html[data-pc] .menu button {
+  height: var(--pc-h-sm) !important;
+  padding: var(--pc-pad-sm) !important;
+  font-size: var(--pc-font-size-sm) !important;
+}
+
+html[data-pc] button:where(:not(#profile-sidebar li button):not(.tabs button)):hover:not(:disabled) {
+  background: var(--pc-btn-hover-bg) !important;
+  border: var(--pc-btn-hover-border) !important;
+  box-shadow: var(--pc-btn-hover-shadow) !important;
+}
+
+html[data-pc] button:where(:not(#profile-sidebar li button):not(.tabs button)):focus-visible {
+  outline: none !important;
+  box-shadow: var(--pc-focus) !important;
+}
+
+html[data-pc] button:where(:not(#profile-sidebar li button):not(.tabs button)):disabled {
+  color: #afacab !important;
+  box-shadow: none !important;
+  cursor: not-allowed !important;
+  opacity: 0.7 !important;
+}
+
+/* 层级：primary / danger / quiet 由 data-kind 标注。 */
+html[data-pc] button[data-kind='primary'] {
+  background: var(--pc-primary-bg) !important;
+  color: var(--pc-primary-color) !important;
+  border: var(--pc-primary-border) !important;
+}
+html[data-pc] button[data-kind='primary']:hover:not(:disabled) {
+  background: var(--pc-primary-hover-bg) !important;
+  border: var(--pc-primary-hover-border) !important;
+}
+
+html[data-pc] button[data-kind='danger'] {
+  background: var(--pc-danger-bg) !important;
+  color: var(--pc-danger-color) !important;
+  border: var(--pc-danger-border) !important;
+}
+html[data-pc] button[data-kind='danger']:hover:not(:disabled) {
+  background: var(--pc-danger-hover-bg) !important;
+  border: var(--pc-danger-hover-border) !important;
+}
+
+html[data-pc] button[data-kind='quiet'] {
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  color: var(--pc-quiet-color) !important;
+}
+html[data-pc] button[data-kind='quiet']:hover:not(:disabled) {
+  background: var(--pc-quiet-hover-bg) !important;
+  border-color: transparent !important;
+}
+
+/* 输入框：与按钮同高同圆角。 */
+html[data-pc] input:not([type='checkbox']):not([type='radio']):not([type='search']) {
+  height: var(--pc-h) !important;
+  padding: 0 12px !important;
+  font-size: var(--pc-font-size) !important;
+  border-radius: var(--pc-radius) !important;
+  border: var(--pc-input-border) !important;
+  background: var(--pc-input-bg) !important;
+  box-shadow: var(--pc-btn-shadow) !important;
+}
+html[data-pc] input:not([type='checkbox']):not([type='radio']):hover:not(:disabled) {
+  border: var(--pc-input-hover-border) !important;
+}
+html[data-pc] input:not([type='checkbox']):not([type='radio']):focus-visible {
+  outline: none !important;
+  box-shadow: var(--pc-focus) !important;
+  background: var(--pc-input-focus-bg) !important;
+}
+html[data-pc] input[type='checkbox'],
+html[data-pc] input[type='radio'] {
+  accent-color: var(--pc-accent) !important;
+}
+
+/* 表单行：标签语义与行距。 */
+html[data-pc] .form label {
+  font-size: var(--pc-label-size) !important;
+  color: var(--pc-label-color) !important;
+  text-transform: var(--pc-label-transform) !important;
+  letter-spacing: var(--pc-label-spacing) !important;
+}
+html[data-pc] .form {
+  gap: var(--pc-form-gap) !important;
+}
+html[data-pc] .form label .hint,
+html[data-pc] .form label .error {
+  text-transform: none !important;
+  letter-spacing: normal !important;
+}

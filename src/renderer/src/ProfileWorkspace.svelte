@@ -146,16 +146,16 @@
         {/if}
         <div class="rail-actions">
           {#if canConnect}
-            <button type="button" onclick={onConnect}>Connect</button>
+            <button type="button" data-kind="primary" onclick={onConnect}>Connect</button>
           {/if}
           {#if canCancel}
             <button type="button" onclick={onCancel}>Cancel</button>
           {/if}
           {#if canDisconnect}
-            <button type="button" onclick={onDisconnect}>Disconnect</button>
+            <button type="button" data-kind="danger" onclick={onDisconnect}>Disconnect</button>
           {/if}
           <button type="button" onclick={onEdit}>Edit</button>
-          <button type="button" onclick={onDelete}>Delete</button>
+          <button type="button" data-kind="danger" onclick={onDelete}>Delete</button>
         </div>
       </aside>
       <div class="detail-cards">
@@ -296,7 +296,7 @@
       <div class="empty">
         <p>Connect to open an SSH Session for this Connection Profile.</p>
         {#if canConnect}
-          <button type="button" onclick={onConnect}>Connect</button>
+          <button type="button" data-kind="primary" onclick={onConnect}>Connect</button>
         {/if}
       </div>
     {:else}
