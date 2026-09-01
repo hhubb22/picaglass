@@ -5,8 +5,8 @@
  * 按钮层级/尺寸/状态长什么样。方向基准已由 map Notes 锁定（Twingate
  * 两级体系），变体在「描边 vs 填充」「尺寸阶梯」「密度」上结构性不同：
  *
- *   A 描边派：Tailscale 源码路线。白底 + 1px 灰边 + 微投影，radius 6px，
- *     38/32 两档高。焦点用 2px outline。
+ *   A 收敛版：描边派（Tailscale 源码路线）+ 用户拍板的 C 尺寸档与
+ *     全大写小标签 + B 的浅红填充 danger。32/28px、radius 6px、焦点 2px outline。
  *   B 填充派：Twingate 截图路线。浅灰填充无边框，radius 8px，36/32 两档。
  *     焦点用三层 ring。
  *   C 紧凑派：回应「工作区太挤」。32/28 高度、13px 字、radius 5px。
@@ -18,12 +18,12 @@
 /* ---------- 变体 token ---------- */
 
 html[data-pc='A'] {
-  --pc-h: 38px;
-  --pc-h-sm: 32px;
-  --pc-pad: 8px 16px;
-  --pc-pad-sm: 4px 12px;
-  --pc-font-size: 14px;
-  --pc-font-size-sm: 13px;
+  --pc-h: 32px;
+  --pc-h-sm: 28px;
+  --pc-pad: 5px 12px;
+  --pc-pad-sm: 3px 10px;
+  --pc-font-size: 13px;
+  --pc-font-size-sm: 12px;
   --pc-font-weight: 500;
   --pc-radius: 6px;
   --pc-accent: #3f5db3;
@@ -42,11 +42,11 @@ html[data-pc='A'] {
   --pc-primary-hover-bg: #444342;
   --pc-primary-hover-border: 1px solid #444342;
 
-  --pc-danger-bg: #ffffff;
+  --pc-danger-bg: #fdecec;
   --pc-danger-color: #940821;
-  --pc-danger-border: 1px solid #dad6d5;
-  --pc-danger-hover-bg: #fff7f7;
-  --pc-danger-hover-border: 1px solid #f68f87;
+  --pc-danger-border: 1px solid transparent;
+  --pc-danger-hover-bg: #fbdcdc;
+  --pc-danger-hover-border: 1px solid transparent;
 
   --pc-quiet-color: #706e6d;
   --pc-quiet-hover-bg: #f7f5f4;
@@ -58,11 +58,11 @@ html[data-pc='A'] {
   --pc-input-hover-border: 1px solid #afacab;
   --pc-input-focus-bg: #ffffff;
 
-  --pc-label-size: 14px;
-  --pc-label-color: #232222;
-  --pc-label-transform: none;
-  --pc-label-spacing: normal;
-  --pc-form-gap: 16px;
+  --pc-label-size: 12px;
+  --pc-label-color: #706e6d;
+  --pc-label-transform: uppercase;
+  --pc-label-spacing: 0.04em;
+  --pc-form-gap: 12px;
 }
 
 html[data-pc='B'] {

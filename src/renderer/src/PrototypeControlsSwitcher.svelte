@@ -7,7 +7,7 @@
 -->
 <script lang="ts">
   const VARIANTS = [
-    { key: 'A', name: '描边派 38/32 · r6' },
+    { key: 'A', name: '收敛版 描边 32/28 · r6' },
     { key: 'B', name: '填充派 36/32 · r8' },
     { key: 'C', name: '紧凑派 32/28 · r5' }
   ] as const
