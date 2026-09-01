@@ -20,7 +20,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const ROOT = process.cwd()
-const OUT_DIR = join(ROOT, 'docs/design/baseline')
+const OUT_DIR = join(ROOT, process.env.BASELINE_OUT ?? 'docs/design/baseline')
 const RENDERER_DIR = join(ROOT, 'out/renderer')
 const PORT = 9333
 const payloads = JSON.parse(readFileSync(join(ROOT, 'scripts/baseline/payloads.json'), 'utf8'))
@@ -308,8 +308,8 @@ async function captureAll(theme) {
   await clickButton('Overview')
   await shot(theme, '03-workspace-overview-connected')
 
-  // Terminal tab: diagnostics panel is still waiting on device facts.
-  await clickButton('Terminal')
+  // 诊断 tab（规格 v1 布局 B）：diagnostics panel is still waiting on device facts.
+  await clickButton('诊断')
   await sleep(600)
   await shot(theme, 'diag-device-facts-loading')
   await ev(`window.__baseline.setDiag('device-facts', window.__baseline.payloads.runs['device-facts'])`)
@@ -355,8 +355,8 @@ async function captureAll(theme) {
   await sleep(1300)
   await shot(theme, '05-diag-tech-support-failed')
 
-  // Terminal alone: collapse the diagnostics panel.
-  await clickButton('收起')
+  // Terminal alone（诊断面板已移出终端页，无收起交互）.
+  await clickButton('Terminal')
   await sleep(300)
   await shot(theme, '06-terminal')
   await clickButton('诊断')

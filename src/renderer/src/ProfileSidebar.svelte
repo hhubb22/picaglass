@@ -137,7 +137,7 @@
       <button type="button" class="create" class:selected={creating} onclick={onCreate}>
         Create Connection Profile
       </button>
-      <button type="button" disabled={liveCount === 0} onclick={onDisconnectAll}>
+      <button type="button" data-kind="danger" disabled={liveCount === 0} onclick={onDisconnectAll}>
         Disconnect All
       </button>
       <button type="button" onclick={onCopyMcpConfig}>{COPY_MCP_CONFIG_LABEL}</button>
@@ -146,15 +146,15 @@
 {/if}
 
 <style>
+  /* 规格 §4.8 侧栏：画布色底，细结构边 */
   .sidebar {
     display: grid;
     align-content: start;
     gap: 16px;
     padding: 20px 16px;
-    border-right: 1px solid var(--border);
+    border-right: 1px solid var(--border-base);
     overflow: auto;
     min-width: 18rem;
-    background: var(--bg);
   }
 
   .brand {
@@ -197,12 +197,7 @@
   }
 
   .search input {
-    font: inherit;
     width: 100%;
-    padding: 8px 10px;
-    border: 1px solid var(--border);
-    background: var(--bg);
-    color: inherit;
   }
 
   ul {
@@ -213,18 +208,15 @@
     gap: 4px;
   }
 
-  button {
-    font: inherit;
+  li button {
     width: 100%;
     text-align: left;
-    padding: 8px 10px;
     border: 1px solid transparent;
     background: transparent;
     color: inherit;
     cursor: pointer;
-  }
-
-  li button {
+    border-radius: var(--radius-card);
+    padding: 8px 12px;
     display: grid;
     grid-template-columns: auto 1fr auto;
     gap: 8px;
@@ -264,19 +256,15 @@
     height: 0.7rem;
   }
 
-  button.selected,
-  button:focus-visible {
-    border-color: var(--fg);
-    background: var(--hover);
+  /* 规格 §4.8：选中项 = 白卡 + 细边；hover = 灰底 */
+  li button:hover {
+    background: var(--bg-hover);
   }
 
-  button:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
-
-  .create {
-    border-color: var(--fg);
+  li button.selected {
+    background: var(--bg-surface);
+    border-color: var(--border-base);
+    box-shadow: var(--shadow-control);
   }
 
   .menu {

@@ -59,8 +59,8 @@
         <input bind:value={secret} type="password" autocomplete="off" disabled={busy} />
       </label>
       <div class="actions">
-        <button type="submit" disabled={busy}>{confirmLabel}</button>
-        <button type="button" disabled={busy} onclick={onCancel}>Cancel</button>
+        <button type="submit" data-kind="primary" disabled={busy}>{confirmLabel}</button>
+        <button type="button" data-kind="quiet" disabled={busy} onclick={onCancel}>Cancel</button>
       </div>
     </form>
   </div>
@@ -78,13 +78,14 @@
   }
 
   .dialog {
-    background: var(--bg);
-    color: var(--fg);
-    border: 1px solid var(--fg);
-    box-shadow: var(--shadow);
-    padding: 20px;
+    background: var(--bg-surface);
+    color: var(--text-base);
+    border: 1px solid var(--border-base);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-dialog);
+    padding: var(--space-4);
     display: grid;
-    gap: 12px;
+    gap: var(--space-3);
     max-width: 28rem;
     width: 100%;
   }
@@ -95,27 +96,15 @@
   }
 
   #secret-title {
+    font-size: var(--font-md);
     font-weight: 600;
   }
 
   label {
     display: grid;
-    gap: 4px;
-    font-size: 0.875rem;
+    gap: var(--space-1);
   }
 
-  input,
-  button {
-    font: inherit;
-    padding: 8px 10px;
-    color: inherit;
-    background: var(--bg);
-    border: 1px solid var(--border);
-  }
-
-  button {
-    cursor: pointer;
-  }
 
   .error {
     color: var(--status-danger);

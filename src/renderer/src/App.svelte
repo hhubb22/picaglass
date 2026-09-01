@@ -1153,6 +1153,7 @@
   )}
   <AppDialog
     title="Replace trusted host key?"
+    tone="danger"
     confirmLabel={HOST_TRUST_ACTION_LABEL.replace}
     onConfirm={() => void decideHost(selected.id, 'replace')}
     onCancel={() => {
@@ -1166,6 +1167,7 @@
 {#if forgetConfirm && selected !== null && selectedSession.pendingHostKey === null}
   <AppDialog
     title="Forget trusted host key?"
+    tone="danger"
     confirmLabel={HOST_TRUST_ACTION_LABEL.forget}
     onConfirm={() => void confirmForget()}
     onCancel={() => {
@@ -1235,6 +1237,7 @@
     {@const confirmation = disconnectProfileConfirmation(profile.label)}
     <AppDialog
       title={confirmation.title}
+      tone="danger"
       confirmLabel={confirmation.confirmLabel}
       onConfirm={() => void confirmDisconnect()}
       onCancel={() => {
@@ -1249,6 +1252,7 @@
 {#if disconnectAllPrompt !== null}
   <AppDialog
     title={disconnectAllPrompt.title}
+    tone="danger"
     confirmLabel={disconnectAllPrompt.confirmLabel}
     onConfirm={() => void confirmDisconnectAll()}
     onCancel={() => {
@@ -1263,6 +1267,7 @@
   {@const confirmation = deleteProfileConfirmation(deleteConfirm.label, deleteConfirm.occupied)}
   <AppDialog
     title={confirmation.title}
+    tone="danger"
     confirmLabel={confirmation.confirmLabel}
     onConfirm={() => void confirmDelete()}
     onCancel={() => {
@@ -1319,8 +1324,8 @@
     grid-template-columns: 18rem minmax(0, 1fr);
     height: 100%;
     min-height: 0;
-    background: var(--bg);
-    color: var(--fg);
+    background: var(--bg-app);
+    color: var(--text-base);
     transition: grid-template-columns var(--motion);
   }
 
@@ -1359,20 +1364,11 @@
   }
 
   .notice {
-    border: 1px solid var(--fg);
-    padding: 10px 12px;
-    background: var(--hover);
+    border: 1px solid var(--border-base);
+    border-radius: var(--radius-card);
+    padding: var(--space-3) var(--space-4);
+    background: var(--bg-surface);
     margin: 16px 24px 0;
-  }
-
-  button {
-    font: inherit;
-    padding: 8px 10px;
-    justify-self: start;
-    color: inherit;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    cursor: pointer;
   }
 
   .fingerprint {

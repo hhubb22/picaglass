@@ -1,4 +1,4 @@
-export type WorkspaceTab = 'overview' | 'terminal'
+export type WorkspaceTab = 'overview' | 'terminal' | 'diagnostics'
 
 export type WorkspacePane = 'empty' | 'create' | 'profile' | 'edit'
 

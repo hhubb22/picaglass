@@ -7,6 +7,7 @@
     title,
     confirmLabel,
     extraLabel,
+    tone = 'primary',
     onConfirm,
     onExtra,
     onCancel,
@@ -15,6 +16,8 @@
     title: string
     confirmLabel: string
     extraLabel?: string
+    /** 规格 §4.3：主行动的按钮层级（primary 或 danger） */
+    tone?: 'primary' | 'danger'
     onConfirm: () => void
     onExtra?: () => void
     onCancel: () => void
@@ -46,8 +49,8 @@
       {#if extraLabel !== undefined && onExtra !== undefined}
         <button type="button" onclick={onExtra}>{extraLabel}</button>
       {/if}
-      <button type="button" onclick={onConfirm}>{confirmLabel}</button>
-      <button type="button" onclick={onCancel}>Cancel</button>
+      <button type="button" data-kind={tone} onclick={onConfirm}>{confirmLabel}</button>
+      <button type="button" data-kind="quiet" onclick={onCancel}>Cancel</button>
     </div>
   </div>
 </div>
@@ -63,35 +66,28 @@
     z-index: 2;
   }
 
+  /* 规格 §4.3 对话框：白卡 r8 + 细边 + 软阴影 */
   .dialog {
-    background: var(--bg);
-    color: var(--fg);
-    border: 1px solid var(--fg);
-    box-shadow: var(--shadow);
-    padding: 20px;
+    background: var(--bg-surface);
+    color: var(--text-base);
+    border: 1px solid var(--border-base);
+    border-radius: var(--radius-card);
+    box-shadow: var(--shadow-dialog);
+    padding: var(--space-4);
     display: grid;
-    gap: 12px;
+    gap: var(--space-3);
     max-width: 28rem;
     width: 100%;
   }
 
-  #dialog-title,
-  p {
+  #dialog-title {
+    font-size: var(--font-md);
     font-weight: 600;
   }
 
   .actions {
     display: flex;
-    gap: 8px;
+    gap: var(--space-2);
     justify-content: end;
-  }
-
-  button {
-    font: inherit;
-    padding: 8px 10px;
-    color: inherit;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    cursor: pointer;
   }
 </style>

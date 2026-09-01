@@ -104,6 +104,13 @@
     <button type="button" class:selected={tab === 'terminal'} onclick={() => onTab('terminal')}>
       Terminal
     </button>
+    <button
+      type="button"
+      class:selected={tab === 'diagnostics'}
+      onclick={() => onTab('diagnostics')}
+    >
+      诊断
+    </button>
   </nav>
 
   <div class="overview" class:hidden={tab !== 'overview'}>
@@ -118,7 +125,7 @@
             <p>{session.failureBanner.detail}</p>
           </details>
         {/if}
-        <button type="button" onclick={onDismissFailure}>Dismiss</button>
+        <button type="button" data-kind="quiet" data-size="sm" onclick={onDismissFailure}>Dismiss</button>
       </div>
     {/if}
     <div class="overview-columns">
@@ -146,16 +153,16 @@
         {/if}
         <div class="rail-actions">
           {#if canConnect}
-            <button type="button" onclick={onConnect}>Connect</button>
+            <button type="button" data-kind="primary" onclick={onConnect}>Connect</button>
           {/if}
           {#if canCancel}
             <button type="button" onclick={onCancel}>Cancel</button>
           {/if}
           {#if canDisconnect}
-            <button type="button" onclick={onDisconnect}>Disconnect</button>
+            <button type="button" data-kind="danger" onclick={onDisconnect}>Disconnect</button>
           {/if}
           <button type="button" onclick={onEdit}>Edit</button>
-          <button type="button" onclick={onDelete}>Delete</button>
+          <button type="button" data-kind="danger" onclick={onDelete}>Delete</button>
         </div>
       </aside>
       <div class="detail-cards">
@@ -258,7 +265,7 @@
             </dl>
           {/if}
           {#if trustCard.canForget}
-            <button type="button" onclick={onForgetHostKey}>{HOST_TRUST_ACTION_LABEL.forget}</button
+            <button type="button" data-kind="danger" onclick={onForgetHostKey}>{HOST_TRUST_ACTION_LABEL.forget}</button
             >
           {/if}
         </article>
@@ -296,29 +303,30 @@
       <div class="empty">
         <p>Connect to open an SSH Session for this Connection Profile.</p>
         {#if canConnect}
-          <button type="button" onclick={onConnect}>Connect</button>
+          <button type="button" data-kind="primary" onclick={onConnect}>Connect</button>
         {/if}
       </div>
     {:else}
       <div class="toolbar">
         {#if canCancel}
-          <button type="button" onclick={onCancel}>Cancel</button>
+          <button type="button" data-size="sm" onclick={onCancel}>Cancel</button>
         {/if}
-        <button type="button" onclick={onClearTerminal}>Clear Terminal</button>
+        <button type="button" data-size="sm" onclick={onClearTerminal}>Clear Terminal</button>
       </div>
     {/if}
-    <div class="term-and-diagnostics">
-      <div class="term-pool" class:hidden={showTerminalEmpty}>
-        {#each terminalIds as id (id)}
-          <ProfileTerminalHost
-            profileId={id}
-            {registry}
-            hidden={id !== profile.id || tab !== 'terminal' || showTerminalEmpty}
-          />
-        {/each}
-      </div>
-      <DiagnosticsPanel profileId={profile.id} {session} />
+    <div class="term-pool" class:hidden={showTerminalEmpty}>
+      {#each terminalIds as id (id)}
+        <ProfileTerminalHost
+          profileId={id}
+          {registry}
+          hidden={id !== profile.id || tab !== 'terminal' || showTerminalEmpty}
+        />
+      {/each}
     </div>
+  </div>
+
+  <div class="diagnostics-pane" class:hidden={tab !== 'diagnostics'}>
+    <DiagnosticsPanel profileId={profile.id} {session} />
   </div>
 </section>
 
@@ -334,23 +342,31 @@
 
   .tabs {
     display: flex;
-    gap: 8px;
-    padding: 16px 24px 0;
+    gap: 16px;
+    padding: 0 24px;
+    height: 46px;
+    align-items: stretch;
   }
 
+  /* 规格 §4.7：tab 导航不按按钮渲染；选中 = 正文色 + 2px 下划线 */
   .tabs button {
-    font: inherit;
-    padding: 8px 10px;
-    border: 1px solid transparent;
+    font-size: var(--font-sm);
+    font-weight: 500;
+    padding: 0 2px;
+    border: none;
+    border-bottom: 2px solid transparent;
     background: transparent;
-    color: inherit;
+    color: var(--text-muted);
     cursor: pointer;
   }
 
-  .tabs button.selected,
-  .tabs button:focus-visible {
-    border-color: var(--fg);
-    background: var(--hover);
+  .tabs button:hover {
+    color: var(--text-base);
+  }
+
+  .tabs button.selected {
+    color: var(--text-base);
+    border-bottom-color: var(--text-base);
   }
 
   .overview {
@@ -388,7 +404,7 @@
   }
 
   h1 {
-    font-size: 1.25rem;
+    font-size: var(--font-xl);
     font-weight: 600;
   }
 
@@ -405,17 +421,18 @@
   }
 
   h2 {
-    font-size: 1rem;
+    font-size: var(--font-md);
     font-weight: 600;
   }
 
+  /* 规格 §4.5 卡片 */
   .card {
     display: grid;
-    gap: 12px;
-    border: 1px solid var(--border);
-    padding: 16px;
-    background: var(--bg);
-    box-shadow: none;
+    gap: var(--space-3);
+    border: 1px solid var(--border-base);
+    border-radius: var(--radius-card);
+    padding: var(--space-4);
+    background: var(--bg-surface);
   }
 
   .status {
@@ -479,12 +496,13 @@
     padding: 8px 8px 8px;
   }
 
-  .term-and-diagnostics {
+  .diagnostics-pane {
     display: flex;
     flex-direction: column;
     height: 100%;
     min-height: 0;
     min-width: 0;
+    padding: 0 8px 8px;
   }
 
   .toolbar {
@@ -512,15 +530,5 @@
 
   .hidden {
     display: none;
-  }
-
-  button {
-    font: inherit;
-    padding: 8px 10px;
-    justify-self: start;
-    color: inherit;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    cursor: pointer;
   }
 </style>

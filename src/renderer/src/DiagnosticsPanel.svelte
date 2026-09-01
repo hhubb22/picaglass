@@ -31,7 +31,6 @@
   } = $props()
 
   const tabs = diagnosticBlockTabs()
-  let collapsed = $state(false)
   let selectedBlock = $state<DiagnosticBlockId>('device-facts')
   let showRaw = $state(false)
   let deviceFactsLoading = $state(false)
@@ -201,7 +200,7 @@
       deviceFactsRun = null
       return
     }
-    if (collapsed || selectedBlock !== 'device-facts') {
+    if (selectedBlock !== 'device-facts') {
       return
     }
     if (loadedDeviceFactsSessionId === sessionId || deviceFactsLoading) {
@@ -223,7 +222,7 @@
       interfaceStatusRun = null
       return
     }
-    if (collapsed || selectedBlock !== 'interface-status') {
+    if (selectedBlock !== 'interface-status') {
       return
     }
     const names = requestedDetailNames
@@ -250,7 +249,7 @@
       l2Run = null
       return
     }
-    if (collapsed || selectedBlock !== 'l2') {
+    if (selectedBlock !== 'l2') {
       return
     }
     if (loadedL2SessionId === sessionId || l2Loading) {
@@ -272,7 +271,7 @@
       l3Run = null
       return
     }
-    if (collapsed || selectedBlock !== 'l3') {
+    if (selectedBlock !== 'l3') {
       return
     }
     if (loadedL3SessionId === sessionId || l3Loading) {
@@ -294,7 +293,7 @@
       logsRun = null
       return
     }
-    if (collapsed || selectedBlock !== 'logs') {
+    if (selectedBlock !== 'logs') {
       return
     }
     const lines = requestedLogLines
@@ -395,7 +394,7 @@
   }
 
   $effect(() => {
-    if (collapsed || selectedBlock !== 'tech-support') {
+    if (selectedBlock !== 'tech-support') {
       return
     }
     void refreshTechSupport()
@@ -408,29 +407,23 @@
   })
 </script>
 
-<section class="panel" class:collapsed>
-  <div class="bar">
-    {#if collapsed}
-      <button type="button" class="toggle" onclick={() => (collapsed = false)}>诊断</button>
-    {:else}
-      <div class="tabs" role="tablist" aria-label="诊断块">
-        {#each tabs as tab (tab.id)}
-          <button
-            type="button"
-            role="tab"
-            aria-selected={selectedBlock === tab.id}
-            class:selected={selectedBlock === tab.id}
-            onclick={() => selectBlock(tab.id)}
-          >
-            {tab.label}
-          </button>
-        {/each}
-      </div>
-      <button type="button" class="toggle" onclick={() => (collapsed = true)}>收起</button>
-    {/if}
+<section class="panel">
+  <!-- 规格 §3.3：块 tab 栏（导航样式，非按钮）+ 白卡面板 -->
+  <div class="tabs" role="tablist" aria-label="诊断块">
+    {#each tabs as tab (tab.id)}
+      <button
+        type="button"
+        role="tab"
+        aria-selected={selectedBlock === tab.id}
+        class:selected={selectedBlock === tab.id}
+        onclick={() => selectBlock(tab.id)}
+      >
+        {tab.label}
+      </button>
+    {/each}
   </div>
 
-  {#if !collapsed}
+  <div class="card">
     <div class="body">
       {#if selectedBlock === 'tech-support'}
         {#if techSupportView === null || techSupportView.status === 'need-session'}
@@ -438,6 +431,7 @@
         {:else if techSupportView.status === 'idle'}
           <button
             type="button"
+            data-kind="primary"
             onclick={startTechSupport}
             disabled={techSupportLoading || !connected}
           >
@@ -538,6 +532,7 @@
           </ol>
           <button
             type="button"
+            data-kind="primary"
             onclick={startTechSupport}
             disabled={techSupportLoading || !connected}
           >
@@ -1375,76 +1370,66 @@
         {/if}
       {/if}
     </div>
-  {/if}
+  </div>
 </section>
 
 <style>
+  /* 规格 §3.3：面板占满诊断页，块 tab 栏 + 白卡 */
   .panel {
-    display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
-    flex: 0 0 46%;
-    margin-top: auto;
-    min-height: 0;
-    border-top: 1px solid var(--border);
-    background: var(--bg);
-    color: var(--fg);
-  }
-
-  .panel.collapsed {
-    flex: 0 0 auto;
-    grid-template-rows: auto;
-  }
-
-  .bar {
     display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 4px 8px;
-    border-bottom: 1px solid var(--border);
+    flex-direction: column;
+    flex: 1 1 0;
+    min-height: 0;
+    color: var(--text-base);
   }
 
-  .collapsed .bar {
-    border-bottom: none;
-  }
-
+  /* 规格 §4.7 tab 导航 */
   .tabs {
     display: flex;
-    flex: 1;
-    gap: 4px;
+    gap: 16px;
+    padding: 0 16px;
+    height: 40px;
+    align-items: stretch;
     overflow: auto;
   }
 
   .tabs button {
-    font: inherit;
-    padding: 6px 8px;
-    border: 1px solid transparent;
+    font-size: var(--font-sm);
+    font-weight: 500;
+    padding: 0 2px;
+    border: none;
+    border-bottom: 2px solid transparent;
     background: transparent;
-    color: inherit;
+    color: var(--text-muted);
     cursor: pointer;
     white-space: nowrap;
   }
 
-  .tabs button.selected,
-  .tabs button:focus-visible {
-    border-color: var(--fg);
-    background: var(--hover);
+  .tabs button:hover {
+    color: var(--text-base);
   }
 
-  .toggle {
-    font: inherit;
-    padding: 6px 8px;
-    margin-left: auto;
-    color: inherit;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    cursor: pointer;
+  .tabs button.selected {
+    color: var(--text-base);
+    border-bottom-color: var(--text-base);
+  }
+
+  .card {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr);
+    flex: 1 1 0;
+    min-height: 0;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-base);
+    border-radius: var(--radius-card);
+    overflow: hidden;
   }
 
   .body {
     overflow: auto;
-    padding: 12px;
+    padding: var(--space-4);
     display: grid;
-    gap: 12px;
+    gap: var(--space-3);
     align-content: start;
   }
 
@@ -1510,7 +1495,7 @@
 
   h3,
   h4 {
-    font-size: 0.9rem;
+    font-size: var(--font-md);
     font-weight: 600;
     margin: 0;
   }
@@ -1559,21 +1544,8 @@
     margin: 0;
   }
 
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.9rem;
-  }
-
-  th,
-  td {
-    text-align: left;
-    padding: 4px 8px;
-    border-bottom: 1px solid var(--border);
-  }
-
   tr.picked {
-    background: var(--hover);
+    background: var(--bg-hover);
   }
 
   table.ports tbody tr {
@@ -1592,18 +1564,4 @@
     overflow: auto;
   }
 
-  button {
-    font: inherit;
-    padding: 8px 10px;
-    justify-self: start;
-    color: inherit;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    cursor: pointer;
-  }
-
-  button:disabled {
-    opacity: 0.6;
-    cursor: default;
-  }
 </style>

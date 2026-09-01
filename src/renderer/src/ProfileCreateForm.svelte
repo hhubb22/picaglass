@@ -137,15 +137,15 @@
   </details>
 
   <div class="actions">
-    <button type="submit" disabled={busy}>Save</button>
-    <button type="button" onclick={onCancel} disabled={busy}>Cancel</button>
+    <button type="submit" data-kind="primary" disabled={busy}>Save</button>
+    <button type="button" data-kind="quiet" onclick={onCancel} disabled={busy}>Cancel</button>
   </div>
 </form>
 
 <style>
   .form {
     display: grid;
-    gap: 14px;
+    gap: var(--space-3);
     max-width: 32rem;
     padding: 24px;
   }
@@ -158,26 +158,23 @@
   label,
   fieldset {
     display: grid;
-    gap: 6px;
-    font-size: 0.875rem;
+    gap: var(--space-1);
   }
 
   fieldset {
-    border: 1px solid var(--border);
-    padding: 12px;
+    border: 1px solid var(--border-control);
+    border-radius: var(--radius-control);
+    padding: var(--space-3);
+    font-size: var(--font-md);
   }
 
-  input,
-  button {
-    font: inherit;
-    padding: 8px 10px;
-    color: inherit;
-    background: var(--bg);
-    border: 1px solid var(--border);
-  }
-
-  button {
-    cursor: pointer;
+  fieldset legend {
+    font-size: var(--font-xs);
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    padding: 0 var(--space-1);
   }
 
   .choice {

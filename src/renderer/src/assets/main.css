@@ -5,36 +5,123 @@
   margin: 0;
 }
 
+/* UI/UX 重设计规格 v1 token（docs/design/ui-ux-redesign-v1.md §2）。
+   DEMO（prototype/spec-v1-acceptance）：旧变量暂以别名指向新 token，
+   正式实施时按 §6 一次性重命名并删除别名。 */
 :root {
   color-scheme: light dark;
-  --fg: #111111;
-  --bg: #ffffff;
-  --muted: #555555;
-  --border: #d0d0d0;
-  --hover: #f3f3f3;
-  --overlay: rgb(0 0 0 / 35%);
-  --shadow: 0 8px 24px rgb(0 0 0 / 18%);
-  --status-idle: #767676;
-  --status-pending: #c9a227;
-  --status-live: #2f7d32;
-  --status-danger: #b00020;
+
+  /* 画布与表面 */
+  --bg-app: #f7f5f4;
+  --bg-surface: #ffffff;
+  --bg-disabled: #faf9f8;
+  --bg-hover: #eeebea;
+  --bg-active: #ffffff;
+
+  /* 文字 */
+  --text-base: #232222;
+  --text-muted: #706e6d;
+  --text-disabled: #afacab;
+  --text-on-primary: #ffffff;
+
+  /* 边框 */
+  --border-base: #eeebea;
+  --border-control: #dad6d5;
+  --border-control-hover: #afacab;
+
+  /* accent */
+  --accent: #3f5db3;
+  --accent-hover: #324994;
+
+  /* 主按钮 */
+  --primary-bg: #232222;
+  --primary-bg-hover: #444342;
+
+  /* 状态色 */
+  --status-ok: #33c27f;
+  --status-warn: #d9a21b;
+  --status-danger: #d04841;
+  --status-info: #4b70cc;
+  --text-danger: #940821;
+  --danger-fill: #fdecec;
+  --danger-fill-hover: #fbdcdc;
+
+  /* 圆角 */
+  --radius-control: 6px;
+  --radius-card: 8px;
+  --radius-full: 999px;
+
+  /* 阴影 */
+  --shadow-control: 0 1px 1px rgba(0, 0, 0, 0.04);
+  --shadow-dialog: 0 10px 40px rgba(0, 0, 0, 0.12), 0 0 16px rgba(0, 0, 0, 0.08);
+
+  /* 间距 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-7: 32px;
+
+  /* 字号 */
+  --font-xs: 12px;
+  --font-sm: 13px;
+  --font-md: 14px;
+  --font-xl: 20px;
+
+  /* 控件尺寸 */
+  --control-h: 32px;
+  --control-h-sm: 28px;
+
+  --transition-fast: 120ms ease;
+
+  /* 旧变量别名（DEMO，正式实施删除） */
+  --fg: var(--text-base);
+  --bg: var(--bg-surface);
+  --muted: var(--text-muted);
+  --border: var(--border-base);
+  --hover: var(--bg-hover);
+  --overlay: rgb(0 0 0 / 30%);
+  --shadow: var(--shadow-dialog);
+  --status-idle: var(--text-disabled);
+  --status-pending: var(--status-warn);
+  --status-live: var(--status-ok);
   --terminal-bg: #111111;
-  --motion: 120ms ease;
+  --motion: var(--transition-fast);
 }
 
 @media (prefers-color-scheme: dark) {
+  /* 深色粗映射（DEMO；正式映射原则见规格 §5，数值后续票定） */
   :root {
+    --bg-app: #161616;
+    --bg-surface: #1f1e1e;
+    --bg-disabled: #1a1a1a;
+    --bg-hover: #2e2d2d;
+    --bg-active: #2e2d2d;
+    --text-base: #e8e8e8;
+    --text-muted: #a3a3a3;
+    --text-disabled: #6b6b6b;
+    --text-on-primary: #232222;
+    --border-base: #3a3a3a;
+    --border-control: #4a4a4a;
+    --border-control-hover: #6b6b6b;
+    --accent: #6b84d8;
+    --primary-bg: #e8e8e8;
+    --primary-bg-hover: #ffffff;
+    --status-ok: #3d9a40;
+    --status-warn: #d4a017;
+    --status-danger: #e25555;
+    --text-danger: #e25555;
+    --danger-fill: #2a1c1e;
+    --danger-fill-hover: #3a2428;
+
     --fg: #e8e8e8;
     --bg: #161616;
     --muted: #a3a3a3;
     --border: #3a3a3a;
     --hover: #242424;
     --overlay: rgb(0 0 0 / 55%);
-    --shadow: 0 8px 24px rgb(0 0 0 / 45%);
-    --status-idle: #9a9a9a;
-    --status-pending: #d4a017;
-    --status-live: #3d9a40;
-    --status-danger: #e25555;
   }
 }
 
@@ -59,17 +146,17 @@ body,
 }
 
 body {
-  color: var(--fg);
-  background: var(--bg);
+  color: var(--text-base);
+  background: var(--bg-app);
   font-family:
     system-ui,
     -apple-system,
     sans-serif;
-  line-height: 1.5;
+  line-height: 1.4;
 }
 
 :focus-visible {
-  outline: 2px solid var(--fg);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -83,4 +170,143 @@ body {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+/* ── 规格 §4.1 按钮：默认 secondary；data-kind 选层级；data-size="sm" 选 28px 档。
+   导航性按钮（.tabs、侧栏列表项）不按按钮渲染。 ── */
+button:not(:where(.tabs button, .sidebar li button, .collapse, .reveal)) {
+  min-height: var(--control-h);
+  padding: 5px 12px;
+  font-size: var(--font-sm);
+  font-weight: 500;
+  color: var(--text-base);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  box-shadow: var(--shadow-control);
+  cursor: pointer;
+  transition: var(--transition-fast);
+  justify-self: start;
+}
+
+button:not(:where(.tabs button, .sidebar li button, .collapse, .reveal)):hover:not(:disabled) {
+  border-color: var(--border-control-hover);
+}
+
+button[data-kind='primary'] {
+  background: var(--primary-bg);
+  border-color: transparent;
+  color: var(--text-on-primary);
+}
+button[data-kind='primary']:hover:not(:disabled) {
+  background: var(--primary-bg-hover);
+  border-color: transparent;
+}
+
+button[data-kind='danger'] {
+  background: var(--danger-fill);
+  border-color: transparent;
+  color: var(--text-danger);
+}
+button[data-kind='danger']:hover:not(:disabled) {
+  background: var(--danger-fill-hover);
+}
+
+button[data-kind='quiet'] {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+}
+button[data-kind='quiet']:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+button[data-size='sm'] {
+  min-height: var(--control-h-sm);
+  padding: 3px 10px;
+  font-size: var(--font-xs);
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* ── 规格 §4.2 输入框 ── */
+input,
+select,
+textarea {
+  min-height: var(--control-h);
+  padding: 0 12px;
+  font-size: var(--font-md);
+  color: var(--text-base);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+}
+
+input:hover:not(:disabled),
+select:hover:not(:disabled) {
+  border-color: var(--border-control-hover);
+}
+
+input:disabled {
+  background: var(--bg-disabled);
+  color: var(--text-disabled);
+}
+
+input[type='checkbox'],
+input[type='radio'] {
+  min-height: 0;
+}
+
+/* ── 规格 §4.2 表单标签 / §4.6 表格 ── */
+label {
+  font-size: var(--font-xs);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+label input,
+label select,
+label .hint,
+label .error {
+  font-size: var(--font-md);
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--text-base);
+}
+
+label .hint {
+  font-size: var(--font-sm);
+  color: var(--text-muted);
+}
+
+label .error {
+  font-size: var(--font-sm);
+  color: var(--text-danger);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-sm);
+}
+
+th {
+  font-size: var(--font-xs);
+  font-weight: 500;
+  color: var(--text-muted);
+  text-align: left;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border-base);
+}
+
+td {
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border-base);
 }
