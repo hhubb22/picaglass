@@ -85,6 +85,8 @@
   // PROTOTYPE(throwaway #58): 控件粗稿样式与变体切换条，勿合入 main
   import './assets/prototype-controls.css'
   import PrototypeControlsSwitcher from './PrototypeControlsSwitcher.svelte'
+  import './assets/prototype-layout.css'
+  import PrototypeLayoutSwitcher from './PrototypeLayoutSwitcher.svelte'
 
   let workspace = $state<ProfileWorkspace>({
     profiles: [],
@@ -1400,3 +1402,4 @@
 </style>
 
 <PrototypeControlsSwitcher />
+<PrototypeLayoutSwitcher />

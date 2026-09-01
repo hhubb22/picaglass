@@ -1,0 +1,41 @@
+/*
+ * PROTOTYPE（throwaway，prototype/diagnostics-layout 分支专用，勿合入 main）
+ *
+ * Wayfinder #59：布局变体的纯 CSS 部分（模板分支在 ProfileWorkspace /
+ * DiagnosticsPanel 里按 protoLayout.current 做）。
+ *
+ *   A 右侧栏：终端与诊断面板左右分栏，面板全高（表格类内容吃高度）。
+ *   B 独立 tab：诊断面板离开终端页，独占内容区（模板分支为主，这里只
+ *     放开面板的高度限制）。
+ *   C 折叠抽屉：默认收成一条栏（模板分支），这里不加样式。
+ */
+
+html[data-playout='A'] .term-and-diagnostics {
+  flex-direction: row !important;
+}
+
+html[data-playout='A'] .panel {
+  flex: 0 0 42% !important;
+  margin-top: 0 !important;
+  border-top: none !important;
+  border-left: 1px solid var(--border) !important;
+}
+
+html[data-playout='A'] .panel.collapsed {
+  flex: 0 0 auto !important;
+}
+
+html[data-playout='B'] .diag-full {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 0 8px 8px;
+}
+
+html[data-playout='B'] .diag-full .panel {
+  flex: 1 1 0 !important;
+  margin-top: 0 !important;
+  border-top: none !important;
+  border: 1px solid var(--border) !important;
+}

@@ -21,6 +21,8 @@
   } from '../../shared/picos/diagnostics-panel'
   import type { TechSupportSnapshot } from '../../shared/picos/tech-support'
   import type { ProfileSessionUi } from '../../shared/ssh-session-ui'
+  // PROTOTYPE(throwaway #59): 布局变体状态
+  import { protoLayout } from './prototype-layout.svelte'
 
   let {
     profileId,
@@ -31,7 +33,8 @@
   } = $props()
 
   const tabs = diagnosticBlockTabs()
-  let collapsed = $state(false)
+  // PROTOTYPE(throwaway #59): C 变体默认折叠
+  let collapsed = $state(protoLayout.current === 'C')
   let selectedBlock = $state<DiagnosticBlockId>('device-facts')
   let showRaw = $state(false)
   let deviceFactsLoading = $state(false)
@@ -411,7 +414,26 @@
 <section class="panel" class:collapsed>
   <div class="bar">
     {#if collapsed}
-      <button type="button" class="toggle" onclick={() => (collapsed = false)}>诊断</button>
+      {#if protoLayout.current === 'C'}
+        <!-- PROTOTYPE(throwaway #59): C 变体折叠栏直接露出块选择 chips -->
+        <div class="tabs" role="tablist" aria-label="诊断块">
+          {#each tabs as tab (tab.id)}
+            <button
+              type="button"
+              role="tab"
+              aria-selected={false}
+              onclick={() => {
+                selectBlock(tab.id)
+                collapsed = false
+              }}
+            >
+              {tab.label}
+            </button>
+          {/each}
+        </div>
+      {:else}
+        <button type="button" class="toggle" onclick={() => (collapsed = false)}>诊断</button>
+      {/if}
     {:else}
       <div class="tabs" role="tablist" aria-label="诊断块">
         {#each tabs as tab (tab.id)}

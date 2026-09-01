@@ -20,8 +20,9 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const ROOT = process.cwd()
-// PROTOTYPE(#58): BASELINE_VARIANT/BASELINE_ONLY/BASELINE_OUT 让同一回路按控件变体出图
+// PROTOTYPE(#58/#59): BASELINE_VARIANT/BASELINE_LAYOUT/BASELINE_ONLY/BASELINE_OUT 让同一回路按变体出图
 const VARIANT = process.env.BASELINE_VARIANT ?? null
+const LAYOUT = process.env.BASELINE_LAYOUT ?? 'current'
 const ONLY = (process.env.BASELINE_ONLY ?? '').split(',').filter(Boolean)
 const OUT_DIR = process.env.BASELINE_OUT ?? join(ROOT, 'docs/design/baseline')
 const RENDERER_DIR = join(ROOT, 'out/renderer')
@@ -317,6 +318,15 @@ async function captureAll(theme) {
   // Terminal tab: diagnostics panel is still waiting on device facts.
   await clickButton('Terminal')
   await sleep(600)
+  // PROTOTYPE(#59): B 变体诊断在独立 tab；C 变体默认折叠，先拍折叠态再用块 chip 展开
+  if (LAYOUT === 'B') {
+    await clickButton('诊断')
+    await sleep(600)
+  } else if (LAYOUT === 'C') {
+    await shot(theme, 'layout-c-collapsed')
+    await clickButton('设备事实')
+    await sleep(600)
+  }
   await shot(theme, 'diag-device-facts-loading')
   await ev(`window.__baseline.setDiag('device-facts', window.__baseline.payloads.runs['device-facts'])`)
   await sleep(600)
@@ -361,12 +371,23 @@ async function captureAll(theme) {
   await sleep(1300)
   await shot(theme, '05-diag-tech-support-failed')
 
-  // Terminal alone: collapse the diagnostics panel.
-  await clickButton('收起')
-  await sleep(300)
-  await shot(theme, '06-terminal')
-  await clickButton('诊断')
-  await sleep(300)
+  // Terminal alone: collapse the diagnostics panel (B 变体终端页无面板；
+  // C 变体折叠后用块 chip 展开，没有「诊断」toggle)。
+  if (LAYOUT === 'B') {
+    await clickButton('Terminal')
+    await sleep(400)
+    await shot(theme, '06-terminal')
+  } else {
+    await clickButton('收起')
+    await sleep(300)
+    await shot(theme, '06-terminal')
+    if (LAYOUT === 'C') {
+      await clickButton('设备事实')
+    } else {
+      await clickButton('诊断')
+    }
+    await sleep(300)
+  }
 
   // Dialog: create profile form.
   await clickButton('Create Connection Profile')
@@ -499,10 +520,8 @@ async function main() {
     if (!mocked) {
       await reloadApp()
     }
-    if (VARIANT !== null) {
-      await ev(`localStorage.setItem('__controlsVariant', ${JSON.stringify(VARIANT)}); localStorage.setItem('__controlsBar', 'hidden')`)
-      await reloadApp()
-    }
+    await ev(`localStorage.setItem('__controlsVariant', ${JSON.stringify(VARIANT ?? 'A')}); localStorage.setItem('__layoutVariant', ${JSON.stringify(LAYOUT)}); localStorage.setItem('__controlsBar', 'hidden')`)
+    await reloadApp()
 
     for (const theme of ['light', 'dark']) {
       await cdp.send('Emulation.setEmulatedMedia', {

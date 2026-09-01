@@ -20,6 +20,8 @@
   import ProfileTerminalHost from './ProfileTerminalHost.svelte'
   import DiagnosticsPanel from './DiagnosticsPanel.svelte'
   import SessionStateMark from './SessionStateMark.svelte'
+  // PROTOTYPE(throwaway #59): 布局变体状态
+  import { protoLayout } from './prototype-layout.svelte'
 
   let {
     profile,
@@ -58,6 +60,10 @@
     onDismissFailure: () => void
     onRefreshSnapshot: () => void
   } = $props()
+
+  // PROTOTYPE(throwaway #59): B 变体的本地 tab 覆盖（不动共享 WorkspaceTab 类型）
+  let protoTab = $state<null | 'diagnostics'>(null)
+  const protoDiagActive = $derived(protoLayout.current === 'B' && protoTab === 'diagnostics')
 
   const authSummary = $derived(
     profile.auth.method === 'password' ? 'Password' : `Private-key file (${profile.auth.label})`
@@ -98,15 +104,39 @@
 
 <section class="workspace">
   <nav class="tabs" aria-label="Profile workspace">
-    <button type="button" class:selected={tab === 'overview'} onclick={() => onTab('overview')}>
+    <button
+      type="button"
+      class:selected={tab === 'overview' && !protoDiagActive}
+      onclick={() => {
+        protoTab = null
+        onTab('overview')
+      }}
+    >
       Overview
     </button>
-    <button type="button" class:selected={tab === 'terminal'} onclick={() => onTab('terminal')}>
+    <button
+      type="button"
+      class:selected={tab === 'terminal' && !protoDiagActive}
+      onclick={() => {
+        protoTab = null
+        onTab('terminal')
+      }}
+    >
       Terminal
     </button>
+    {#if protoLayout.current === 'B'}
+      <!-- PROTOTYPE(throwaway #59): B 变体的独立诊断 tab -->
+      <button
+        type="button"
+        class:selected={protoDiagActive}
+        onclick={() => (protoTab = 'diagnostics')}
+      >
+        诊断
+      </button>
+    {/if}
   </nav>
 
-  <div class="overview" class:hidden={tab !== 'overview'}>
+  <div class="overview" class:hidden={tab !== 'overview' || protoDiagActive}>
     {#if session.failureBanner !== null}
       <div class="failure-banner" role="alert">
         <p>
@@ -291,7 +321,7 @@
     </div>
   </div>
 
-  <div class="terminal-pane" class:hidden={tab !== 'terminal'}>
+  <div class="terminal-pane" class:hidden={tab !== 'terminal' || protoDiagActive}>
     {#if showTerminalEmpty}
       <div class="empty">
         <p>Connect to open an SSH Session for this Connection Profile.</p>
@@ -317,9 +347,18 @@
           />
         {/each}
       </div>
-      <DiagnosticsPanel profileId={profile.id} {session} />
+      {#if protoLayout.current !== 'B'}
+        <DiagnosticsPanel profileId={profile.id} {session} />
+      {/if}
     </div>
   </div>
+
+  <!-- PROTOTYPE(throwaway #59): B 变体的全高诊断区 -->
+  {#if protoLayout.current === 'B'}
+    <div class="diag-full" class:hidden={!protoDiagActive}>
+      <DiagnosticsPanel profileId={profile.id} {session} />
+    </div>
+  {/if}
 </section>
 
 <style>
